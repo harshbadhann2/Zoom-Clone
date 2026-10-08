@@ -2,9 +2,6 @@
 
 import type { Meeting } from "@/types/meeting";
 
-// The assignment says to assume a default logged-in user (no authentication).
-export const CURRENT_USER = { name: "Harsh Badhan", plan: "Basic" };
-
 const MEETING_CODE_PATTERN = /^\d{10}$/;
 
 /**

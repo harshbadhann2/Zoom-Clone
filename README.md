@@ -1,8 +1,8 @@
 # Zoom Clone
 
-A Zoom-style video meeting web app built for the SDE Fullstack assignment. You can start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, and manage a meeting room as the host.
+A Zoom-style video meeting web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, chat in the meeting, and manage participants as the host.
 
-**Live demo:** https://harsh-zoom-clone.vercel.app
+**Live demo:** https://harsh-zoom-clone.vercel.app. Click **Sign In → Continue as demo user** (`demo@zoomclone.app` / `zoomdemo123`), or create your own account.
 **API:** https://zoom-clone-api-delta.vercel.app (interactive docs at [`/docs`](https://zoom-clone-api-delta.vercel.app/docs))
 
 ---
@@ -12,16 +12,18 @@ A Zoom-style video meeting web app built for the SDE Fullstack assignment. You c
 ### Mandatory
 | Feature | What it does |
 |---|---|
-| **Landing dashboard** | Navbar with Home/Meetings/Chat/Contacts tabs, search, notifications, settings and a profile menu (placeholders). Zoom's four action tiles, a live-clock card with **Upcoming meetings**, and a **Recent meetings** list. |
+| **Landing dashboard** | Navbar with Home/Meetings/Chat/Contacts tabs, search, notifications, settings and a profile menu (placeholders, plus a working Sign out). Zoom's four action tiles, a live-clock card with **Upcoming meetings**, and a **Recent meetings** list. |
 | **Instant meeting** | **New meeting** creates the meeting on the server, which generates a unique 10-digit Meeting ID and invite link and stores both in SQLite. The host is then taken into the room, where the invite link is shown. |
-| **Join meeting** | Accepts a Meeting ID (`614 838 5880`, `614-838-5880`) **or** a full invite link, plus a display name. The input is checked in the browser, then the server checks the meeting exists and hasn't ended. |
+| **Join meeting** | Same flow as Zoom. The **Join Meeting** dialog takes a Meeting ID (`614 838 5880`, `614-838-5880`) **or** a full invite link and checks with the server that the meeting exists. The **pre-join page** (`/join/{id}`, also what invite links open) then asks for your display name and lets you choose microphone and camera with a live preview. |
 | **Schedule meeting** | Topic, description, date, time (in your own time zone) and duration. The server validates and stores it, and the meeting appears under Upcoming with its generated link. |
 
 ### Bonus
-- **Responsive**: works on desktop, tablet and phone (the participants panel becomes full-screen on phones).
-- **Host controls**: **Mute all**, **Remove participant**, and **End meeting for all**. Only the host can use them, and the server checks this.
+- **User authentication**: Sign Up / Sign In / Sign Out. Passwords are hashed with salted PBKDF2, and login tokens are stored in a `sessions` table. A seeded demo account covers the brief's "assume a default user is logged in", with one-click sign-in. Guests can join meetings without an account, as in Zoom.
+- **Responsive**: works on desktop, tablet and phone (the side panels become full-screen on phones).
+- **Host controls**: **Mute all**, **Remove participant**, and **End meeting for all**. The host is decided by the server (the signed-in owner of the meeting), not by the browser.
+- **In-meeting chat**: messages are stored in SQLite and shared with everyone in the meeting, with an unread badge on the Chat button.
 - **Real camera preview** (`getUserMedia`) and **real screen sharing** (`getDisplayMedia`) on your own screen.
-- **Live participant list**: open the invite link in another tab or browser and both rooms show each other, including mute status.
+- **Live participant list**: open the invite link in another browser and both rooms show each other, including mute status.
 - Invite-link page (`/join/{id}`), copy invitation, delete a scheduled meeting, and loading, empty and error states throughout.
 
 ---
@@ -52,7 +54,9 @@ SQLAlchemy models (app/models.py)
 SQLite (meetings, participants)
 ```
 
-**Real-time updates without WebSockets:** the meeting room fetches `GET /api/meetings/{id}` every 3 seconds. That is how a guest notices they were muted by "Mute all", removed, or that the meeting ended. It is simple to explain and enough at this scale. Moving to WebSockets would be the next step for real video.
+**Real-time updates without WebSockets:** the meeting room fetches `GET /api/meetings/{id}` every 3 seconds. That one response carries the participants and the chat, so it is how a guest sees new messages, notices they were muted by "Mute all" or removed, or learns the meeting ended. It is simple to explain and enough at this scale. Moving to WebSockets would be the next step for real video.
+
+**Authentication:** after signing in, the browser keeps a random token (in `localStorage`) and sends it as `Authorization: Bearer <token>`. FastAPI's `get_current_user` dependency looks the token up in the `sessions` table.
 
 ### Project structure
 
@@ -61,22 +65,25 @@ backend/
   app/
     main.py        FastAPI app: CORS, startup (create tables + seed), readable validation errors
     config.py      Environment variables (DATABASE_URL, FRONTEND_URL)
+    auth.py        Sign up / sign in / sign out, password hashing, current-user dependency
     database.py    Engine, session-per-request dependency, SQLite foreign keys ON
-    models.py      Meeting and Participant tables
+    models.py      User, AuthSession, Meeting, Participant and Message tables
     schemas.py     Pydantic request/response shapes + validation rules
-    services.py    Business logic: meeting ID generation, upcoming/recent rules, join/leave, host actions
+    services.py    Business logic: meeting ID generation, upcoming/recent rules, join/leave, chat, host actions
     routes.py      REST endpoints (thin: validate → call service → return)
-    seed.py        Sample meetings for a non-empty first run
+    seed.py        Demo user + sample meetings for a non-empty first run
   tests/           pytest API tests (in-memory SQLite)
 
 frontend/
   app/
-    page.tsx                       Dashboard
-    join/[meetingCode]/page.tsx    Invite-link pre-join page
+    page.tsx                       Dashboard (redirects to /login if not signed in)
+    login/page.tsx                 Sign in / sign up / join as guest
+    join/[meetingCode]/page.tsx    Pre-join page: name, mic and camera preview
     meeting/[meetingCode]/page.tsx Meeting room
   components/                      Navbar, modals, meeting lists, toast, avatar
-  components/room/                 VideoTile, ControlBar, ParticipantsPanel
+  components/room/                 VideoTile, ControlBar, ParticipantsPanel, ChatPanel
   lib/api.ts                       Every backend call lives here
+  lib/auth.ts                      Stores the login token in the browser
   lib/meeting.ts                   Pure helpers (parse Meeting ID/link, formatting) + tests
   types/meeting.ts                 TypeScript types matching the API responses
 ```
@@ -86,24 +93,35 @@ frontend/
 ## Database schema
 
 ```
-meetings                                   participants
-─────────────────────────────              ───────────────────────────────
-id               INTEGER PK                id            INTEGER PK
-meeting_code     VARCHAR(10) UNIQUE  ◄──┐  meeting_id    INTEGER FK → meetings.id (ON DELETE CASCADE)
-title            VARCHAR(200)           │  display_name  VARCHAR(100)
-description      TEXT                   └─ is_host       BOOLEAN
-meeting_type     'instant' | 'scheduled'   is_muted      BOOLEAN
-status           'scheduled' | 'live' | 'ended'   joined_at  DATETIME
-host_name        VARCHAR(100)              left_at       DATETIME NULL  (NULL = still in the meeting)
-scheduled_at     DATETIME (UTC)
-duration_minutes INTEGER  CHECK > 0
-created_at / updated_at / ended_at
+users                         sessions                      meetings
+──────────────────────        ──────────────────────        ─────────────────────────────────────
+id            PK              token     PK (random)         id               PK
+name                          user_id   FK → users.id       meeting_code     VARCHAR(10) UNIQUE
+email         UNIQUE          created_at                    host_user_id     FK → users.id
+password_hash (salt$hash)                                   title, description
+created_at                                                  meeting_type     'instant' | 'scheduled'
+                                                            status           'scheduled' | 'live' | 'ended'
+                                                            scheduled_at (UTC), duration_minutes CHECK > 0
+                                                            created_at / updated_at / ended_at
+
+participants                                  messages
+────────────────────────────────────          ─────────────────────────────────────
+id            PK                              id              PK
+meeting_id    FK → meetings.id (CASCADE)      meeting_id      FK → meetings.id (CASCADE)
+display_name                                  participant_id  FK → participants.id (CASCADE)
+is_host, is_muted                             text            VARCHAR(1000)
+joined_at                                     sent_at
+left_at       NULL = still in the meeting
 ```
 
-- **One-to-many:** a meeting has many participants. Deleting a meeting deletes its participants (cascade).
+**Relationships:** users 1──< meetings (host), users 1──< sessions, meetings 1──< participants, meetings 1──< messages, participants 1──< messages (sender).
+
+- **Participants are not users.** Guests join with just a display name, as in Zoom, so `participants` stores the name used in that meeting rather than requiring an account.
 - **`id` vs `meeting_code`:** `id` is the internal key used by foreign keys. `meeting_code` is the public, shareable 10-digit "Meeting ID". Keeping them separate means the public ID can never break a relationship.
-- **Constraints in the database, not only in code:** a `UNIQUE` index on `meeting_code`, `CHECK` constraints on `meeting_type`, `status` and `duration_minutes`, and SQLite foreign keys switched on (`PRAGMA foreign_keys = ON`).
+- **Host name isn't duplicated:** it comes from `meetings.host_user_id → users.name`, so renaming a user can't leave old meetings out of date.
+- **Constraints in the database, not only in code:** `UNIQUE` on `meeting_code` and `email`, `CHECK` constraints on `meeting_type`, `status` and `duration_minutes`, and SQLite foreign keys switched on (`PRAGMA foreign_keys = ON`).
 - **Participant history is kept:** leaving sets `left_at` instead of deleting the row, so Recent meetings can show how many people attended.
+- **Sessions are rows**, so signing out deletes the row and the token stops working immediately.
 - **Times** are stored in UTC. The API returns ISO strings with `Z`, and the browser shows them in local time.
 
 ### Upcoming vs recent
@@ -114,14 +132,21 @@ created_at / updated_at / ended_at
 
 ## API
 
+🔒 = requires `Authorization: Bearer <token>`.
+
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/meetings` | Create a meeting. `meeting_type: "instant"` starts now. `"scheduled"` requires `title` and a future `scheduled_at`. |
-| `GET` | `/api/meetings/upcoming` | Upcoming meetings |
-| `GET` | `/api/meetings/recent` | Recent meetings (latest 10) |
-| `GET` | `/api/meetings/{meeting_code}` | Meeting details + active participants (the room polls this) |
-| `DELETE` | `/api/meetings/{meeting_code}` | Delete a meeting that isn't in progress |
-| `POST` | `/api/meetings/{meeting_code}/join` | `{display_name, as_host}` → creates a participant (404 if missing, 409 if ended) |
+| `POST` | `/api/auth/signup` | `{name, email, password}` → `{token, user}` (409 if the email is taken) |
+| `POST` | `/api/auth/login` | `{email, password}` → `{token, user}` (401 if wrong) |
+| `GET` 🔒 | `/api/auth/me` | The signed-in user |
+| `POST` | `/api/auth/logout` | Deletes the session |
+| `POST` 🔒 | `/api/meetings` | Create a meeting hosted by you. `meeting_type: "instant"` starts now. `"scheduled"` requires `title` and a future `scheduled_at`. |
+| `GET` 🔒 | `/api/meetings/upcoming` | Your upcoming meetings |
+| `GET` 🔒 | `/api/meetings/recent` | Your recent meetings (latest 10) |
+| `GET` | `/api/meetings/{meeting_code}` | Meeting details + active participants + chat (public, because guests need it. The room polls this) |
+| `DELETE` 🔒 | `/api/meetings/{meeting_code}` | Delete your meeting if it isn't in progress |
+| `POST` | `/api/meetings/{meeting_code}/join` | `{display_name, is_muted}` → creates a participant (404 if missing, 409 if ended). If the signed-in owner joins, they become host. |
+| `POST` | `/api/meetings/{meeting_code}/messages` | `{participant_id, text}`: send a chat message |
 | `PATCH` | `/api/meetings/{meeting_code}/participants/{id}` | `{is_muted}`: mute or unmute yourself |
 | `POST` | `/api/meetings/{meeting_code}/participants/{id}/leave` | Leave the meeting |
 | `POST` | `/api/meetings/{meeting_code}/end` | Host only: end for everyone |
@@ -157,7 +182,7 @@ npm run dev
 
 ### Tests
 ```bash
-cd backend && pytest               # 15 API tests
+cd backend && pytest               # 28 API tests (meetings, auth, chat, host controls)
 cd frontend && npm test            # helper unit tests (Node's built-in test runner)
 cd frontend && npm run lint && npm run build
 ```
@@ -176,34 +201,29 @@ The backend reads real environment variables, and the defaults work for local de
 
 ## Sample data
 
-On startup, if the `meetings` table is empty, `app/seed.py` adds 4 upcoming meetings (Team Standup, Product Design Review, Engineering Sync, Project Discussion) and 4 recent meetings with participants. Dates are relative to today, so the dashboard always looks realistic. To reset, delete `backend/zoom_clone.db` and restart.
+On startup, if the database is empty, `app/seed.py` creates the **demo user** (`demo@zoomclone.app` / `zoomdemo123`), 4 upcoming meetings (Team Standup, Product Design Review, Engineering Sync, Project Discussion) and 4 recent meetings with participants. Dates are relative to today, so the dashboard always looks realistic. To reset, or after changing the schema, delete `backend/zoom_clone.db` and restart.
 
 ---
 
 ## Deployment
 
-Both apps are deployed on **Vercel** as two projects from this repo.
-
-| Project | Root directory | Settings |
+| Part | Host | Settings |
 |---|---|---|
-| Frontend (`zoom-clone-harsh`) | `frontend/` | Next.js preset. `NEXT_PUBLIC_API_URL=https://zoom-clone-api-delta.vercel.app` |
-| Backend (`zoom-clone-api`) | `backend/` | FastAPI preset (entrypoint `app/main.py`). `DATABASE_URL=sqlite:////tmp/zoom_clone.db`, `FRONTEND_URL=https://harsh-zoom-clone.vercel.app` |
+| Frontend | **Vercel**, root directory `frontend/` | Next.js preset. `NEXT_PUBLIC_API_URL` = the backend URL |
+| Backend | **Railway**, root directory `backend/` | Start command and health check come from `backend/railway.json`. A **volume mounted at `/data`** holds the database. `DATABASE_URL=sqlite:////data/zoom_clone.db`, `FRONTEND_URL=https://harsh-zoom-clone.vercel.app` |
 
-Deploy with the Vercel CLI from each folder: `vercel deploy --prod`.
-
-**About SQLite in production:** serverless functions can only write to `/tmp`, and that storage is temporary. Data lives as long as the function instance stays warm. After a cold start the database is recreated and re-seeded. That is fine for a demo, and it keeps the assignment's SQLite requirement. For permanent data, run the same backend on a host with a persistent disk (for example a Render or Railway service with a volume, `DATABASE_URL=sqlite:////data/zoom_clone.db`) with no code changes.
-
----
+**Why Railway for the backend:** SQLite is a single file, so the backend must run as **one long-running server with a persistent disk**. Serverless platforms can run several copies at once, each with its own temporary file, and meetings would appear and disappear. Railway runs one instance with a volume, so data stays consistent and survives restarts.
 
 ## Assumptions
 
-- **No authentication.** As the assignment says, there is a default logged-in user (`CURRENT_USER` in `frontend/lib/meeting.ts`), who is the host of meetings they start. Guests joining by ID or link only enter a display name.
+- **Default user + optional accounts.** The brief says to assume a default logged-in user, so a seeded demo account is one click away on the sign-in page. Sign-up/login is implemented as the bonus. Guests joining by ID or link don't need an account, as in Zoom.
 - **No real audio/video transport.** Your own camera and screen share are real but only shown on your own screen. Other participants appear as avatar tiles. Presence, mute state and host actions are real and shared through the API.
 - Meeting IDs are 10 random digits generated on the server. Uniqueness is checked before insert and enforced by a `UNIQUE` index.
 - Closing a browser tab without clicking Leave keeps that participant listed until the meeting ends (there is no presence heartbeat).
 
 ## Evaluation notes
 
-- **Kept deliberately simple:** a flat backend (`routes → services → models`), no state-management library, plain `fetch`, and the native `<dialog>` element for modals (Escape key and focus handling come free). The only UI dependency is an icon library.
+- **Kept deliberately simple:** a flat backend (`routes → services → models`), no state-management library, plain `fetch`, and the native `<dialog>` element for modals (Escape key and focus handling come free). The only UI dependency is an icon library. Password hashing uses Python's standard library (`hashlib.pbkdf2_hmac`), so auth adds no dependencies.
+- **Zoom fidelity:** colors, font stack, button and input sizes, the Join dialog and the pre-join page were matched against Zoom's live web client (`app.zoom.us/wc`).
 - **Validation happens twice:** the browser gives instant feedback, and the server is the source of truth (Pydantic plus database constraints).
 - **Polling instead of WebSockets** keeps the room easy to explain while still syncing between participants.

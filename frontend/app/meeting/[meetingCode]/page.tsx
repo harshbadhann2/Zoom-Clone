@@ -7,8 +7,18 @@ import { Copy, Info, Loader2, MonitorUp, ShieldCheck, WifiOff } from "lucide-rea
 import { VideoTile } from "@/components/room/VideoTile";
 import { ControlBar } from "@/components/room/ControlBar";
 import { ParticipantsPanel } from "@/components/room/ParticipantsPanel";
+import { ChatPanel } from "@/components/room/ChatPanel";
 import { useToast } from "@/components/Toast";
-import { ApiError, endMeeting, getMeeting, leaveMeeting, muteAll, removeParticipant, setMuted } from "@/lib/api";
+import {
+  ApiError,
+  endMeeting,
+  getMeeting,
+  leaveMeeting,
+  muteAll,
+  removeParticipant,
+  sendMessage,
+  setMuted,
+} from "@/lib/api";
 import { formatMeetingCode } from "@/lib/meeting";
 import type { MeetingDetail, Participant } from "@/types/meeting";
 
@@ -17,7 +27,7 @@ const POLL_INTERVAL_MS = 3000;
 
 interface MeetingRoomProps {
   params: Promise<{ meetingCode: string }>;
-  searchParams: Promise<{ pid?: string; new?: string; share?: string }>;
+  searchParams: Promise<{ pid?: string; new?: string; share?: string; video?: string }>;
 }
 
 export default function MeetingRoomPage({ params, searchParams }: MeetingRoomProps) {
@@ -35,7 +45,8 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
-  const [showParticipants, setShowParticipants] = useState(false);
+  const [sidePanel, setSidePanel] = useState<"participants" | "chat" | null>(null);
+  const [seenMessageCount, setSeenMessageCount] = useState(0); // for the unread badge on Chat
   const [showInfo, setShowInfo] = useState(query.new === "1"); // show the invite link right after creating
   const [showSharePrompt, setShowSharePrompt] = useState(query.share === "1");
 
@@ -56,6 +67,22 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
   }, [meetingCode, myId, refreshCount]);
 
   const refreshNow = () => setRefreshCount((count) => count + 1);
+
+  // If the camera was on in the pre-join preview, turn it on again in the room.
+  useEffect(() => {
+    if (query.video !== "1") return;
+    let cancelled = false;
+    navigator.mediaDevices
+      ?.getUserMedia({ video: true })
+      .then((stream) => {
+        if (cancelled) stream.getTracks().forEach((track) => track.stop());
+        else setCameraStream(stream);
+      })
+      .catch(() => undefined); // permission denied: just stay with video off
+    return () => {
+      cancelled = true;
+    };
+  }, [query.video]);
 
   // Stop the camera / screen share when it's turned off or when we leave the page.
   useEffect(() => () => cameraStream?.getTracks().forEach((track) => track.stop()), [cameraStream]);
@@ -135,6 +162,22 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
       else await leaveMeeting(meetingCode, me.id);
     } finally {
       router.push("/");
+    }
+  }
+
+  /** Open/close a side panel. Opening or closing marks all chat messages as read. */
+  function togglePanel(panel: "participants" | "chat") {
+    setSeenMessageCount(meeting!.messages.length);
+    setSidePanel((current) => (current === panel ? null : panel));
+  }
+
+  async function handleSendMessage(text: string) {
+    try {
+      await sendMessage(meetingCode, me!.id, text);
+      refreshNow(); // fetch right away so the message appears without waiting for the next poll
+    } catch (error) {
+      showToast((error as Error).message);
+      throw error; // keep the draft in the input
     }
   }
 
@@ -263,12 +306,15 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
           )}
         </main>
 
-        {showParticipants && (
+        {sidePanel === "chat" && (
+          <ChatPanel messages={meeting.messages} myId={me.id} onSend={handleSendMessage} onClose={() => togglePanel("chat")} />
+        )}
+        {sidePanel === "participants" && (
           <ParticipantsPanel
             participants={participants}
             myId={me.id}
             isHost={me.is_host}
-            onClose={() => setShowParticipants(false)}
+            onClose={() => togglePanel("participants")}
             onInvite={copyInviteLink}
             onMuteAll={() => runHostAction(() => muteAll(meetingCode, me.id), "Everyone has been muted")}
             onRemove={(person) =>
@@ -284,10 +330,12 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
         isSharing={Boolean(screenStream)}
         isHost={me.is_host}
         participantCount={participants.length}
+        unreadMessages={sidePanel === "chat" ? 0 : meeting.messages.length - seenMessageCount}
         onToggleMute={handleToggleMute}
         onToggleVideo={handleToggleVideo}
         onToggleShare={handleToggleShare}
-        onToggleParticipants={() => setShowParticipants((open) => !open)}
+        onToggleParticipants={() => togglePanel("participants")}
+        onToggleChat={() => togglePanel("chat")}
         onLeave={handleLeave}
       />
       {toast}

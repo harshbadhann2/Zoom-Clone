@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Mic, MicOff, MonitorUp, Users, Video, VideoOff } from "lucide-react";
+import { MessageSquare, Mic, MicOff, MonitorUp, Users, Video, VideoOff } from "lucide-react";
 
 interface ControlBarProps {
   isMuted: boolean;
@@ -9,10 +9,12 @@ interface ControlBarProps {
   isSharing: boolean;
   isHost: boolean;
   participantCount: number;
+  unreadMessages: number;
   onToggleMute: () => void;
   onToggleVideo: () => void;
   onToggleShare: () => void;
   onToggleParticipants: () => void;
+  onToggleChat: () => void;
   onLeave: (endForAll: boolean) => void;
 }
 
@@ -38,6 +40,16 @@ export function ControlBar(props: ControlBarProps) {
             <span className="absolute -right-3 -top-1.5 rounded-full bg-room-hover px-1 text-[10px] font-semibold leading-4">
               {props.participantCount}
             </span>
+          </span>
+        </ControlButton>
+        <ControlButton label="Chat" onClick={props.onToggleChat}>
+          <span className="relative">
+            <MessageSquare size={22} />
+            {props.unreadMessages > 0 && (
+              <span className="absolute -right-2.5 -top-1.5 min-w-4 rounded-full bg-zoom-red px-1 text-center text-[10px] font-semibold leading-4">
+                {props.unreadMessages}
+              </span>
+            )}
           </span>
         </ControlButton>
         <ControlButton label={props.isSharing ? "Stop Share" : "Share Screen"} onClick={props.onToggleShare}>

@@ -10,15 +10,19 @@ import { JoinMeetingModal } from "@/components/JoinMeetingModal";
 import { ScheduleMeetingModal } from "@/components/ScheduleMeetingModal";
 import { useToast } from "@/components/Toast";
 import {
+  ApiError,
   createInstantMeeting,
   deleteMeeting,
+  getMe,
   getRecentMeetings,
   getUpcomingMeetings,
   joinMeeting,
+  logOut,
 } from "@/lib/api";
-import { buildInvitation, CURRENT_USER } from "@/lib/meeting";
+import { clearToken } from "@/lib/auth";
+import { buildInvitation } from "@/lib/meeting";
 import { useCurrentTime } from "@/lib/useCurrentTime";
-import type { Meeting } from "@/types/meeting";
+import type { Meeting, User } from "@/types/meeting";
 
 type OpenModal = "join" | "share" | "schedule" | null;
 
@@ -27,6 +31,7 @@ export default function DashboardPage() {
   const { toast, showToast } = useToast();
   const now = useCurrentTime();
 
+  const [user, setUser] = useState<User | null>(null);
   const [upcoming, setUpcoming] = useState<Meeting[] | null>(null); // null = loading
   const [recent, setRecent] = useState<Meeting[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -38,6 +43,15 @@ export default function DashboardPage() {
   const [reloadCount, setReloadCount] = useState(0);
   const reloadMeetings = () => setReloadCount((count) => count + 1);
 
+  // Who is signed in? Without a valid token the server answers 401 and we go to the sign-in page.
+  useEffect(() => {
+    getMe()
+      .then(setUser)
+      .catch((error: ApiError) => {
+        if (error.status === 401) router.replace("/login");
+      });
+  }, [router]);
+
   useEffect(() => {
     Promise.all([getUpcomingMeetings(), getRecentMeetings()])
       .then(([upcomingList, recentList]) => {
@@ -45,12 +59,20 @@ export default function DashboardPage() {
         setRecent(recentList);
         setLoadError(null);
       })
-      .catch((error: Error) => setLoadError(error.message));
+      .catch((error: ApiError) => {
+        if (error.status !== 401) setLoadError(error.message); // 401 is handled by the redirect above
+      });
   }, [reloadCount]);
 
-  /** Join a meeting as the host (the default user) and open the meeting room. */
+  async function handleSignOut() {
+    await logOut().catch(() => undefined); // sign out locally even if the server is unreachable
+    clearToken();
+    router.replace("/login");
+  }
+
+  /** Join our own meeting. The server sees our sign-in token and makes us the host. */
   async function enterAsHost(code: string, isNewMeeting = false) {
-    const me = await joinMeeting(code, CURRENT_USER.name, true);
+    const me = await joinMeeting(code, user?.name ?? "Host");
     router.push(`/meeting/${code}?pid=${me.id}${isNewMeeting ? "&new=1" : ""}`);
   }
 
@@ -93,14 +115,18 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen">
-      <Navbar onPlaceholderClick={(feature) => showToast(`${feature} isn’t available in this demo`)} />
+      <Navbar
+        user={user}
+        onSignOut={handleSignOut}
+        onPlaceholderClick={(feature) => showToast(`${feature} isn’t available in this demo`)}
+      />
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-12">
         <div className="grid items-start gap-8 lg:grid-cols-[1fr_420px] lg:gap-12">
           {/* Left: greeting + the four big action tiles */}
           <section aria-label="Meeting actions" className="flex flex-col items-center lg:pt-10">
             <h1 className="text-center text-2xl font-semibold tracking-tight sm:text-3xl">
-              {now ? `${greeting(now)}, ${CURRENT_USER.name.split(" ")[0]}` : "\u00a0"}
+              {now && user ? `${greeting(now)}, ${user.name.split(" ")[0]}` : "\u00a0"}
             </h1>
             <p className="mt-2 text-center text-sm text-ink-muted">Start, join or schedule a meeting.</p>
 
@@ -139,6 +165,7 @@ export default function DashboardPage() {
       <JoinMeetingModal open={openModal === "join" || openModal === "share"} mode={openModal === "share" ? "share" : "join"} onClose={() => setOpenModal(null)} />
       <ScheduleMeetingModal
         open={openModal === "schedule"}
+        hostName={user?.name ?? ""}
         onClose={() => setOpenModal(null)}
         onScheduled={() => {
           showToast("Meeting scheduled");

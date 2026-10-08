@@ -1,45 +1,79 @@
 "use client";
 
-// Opened from an invite link like https://<app>/join/6148385880.
-// Shows the meeting details, asks for a display name, then enters the meeting room.
+// Pre-join screen, opened from an invite link like https://<app>/join/6148385880
+// (or after entering a Meeting ID in the Join dialog). Laid out like Zoom's web client:
+// camera preview with Mute / Start Video on the left, "Enter Meeting Info" on the right.
 
 import { use, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, Loader2, MicOff, User, VideoOff } from "lucide-react";
-import { Field, inputClass } from "@/components/JoinMeetingModal";
+import { ChevronLeft, Loader2, Mic, MicOff, User, Video, VideoOff } from "lucide-react";
+import { inputClass } from "@/components/JoinMeetingModal";
+import { useToast } from "@/components/Toast";
 import { ApiError, getMeeting, joinMeeting } from "@/lib/api";
 import { formatDayLabel, formatMeetingCode, meetingTimeRange, parseMeetingInput } from "@/lib/meeting";
 import type { MeetingDetail } from "@/types/meeting";
 
-export default function JoinPage({ params }: { params: Promise<{ meetingCode: string }> }) {
+const SAVED_NAME_KEY = "zoom-clone-name";
+
+interface JoinPageProps {
+  params: Promise<{ meetingCode: string }>;
+  searchParams: Promise<{ share?: string }>;
+}
+
+export default function JoinPage({ params, searchParams }: JoinPageProps) {
   const { meetingCode: rawCode } = use(params);
+  const { share } = use(searchParams);
   const meetingCode = parseMeetingInput(rawCode); // null if the link is malformed
   const router = useRouter();
+  const { toast, showToast } = useToast();
 
   const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [name, setName] = useState("");
-  const [nameError, setNameError] = useState<string | null>(null);
+  const [rememberName, setRememberName] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     if (!meetingCode) return;
     getMeeting(meetingCode)
-      .then(setMeeting)
+      .then((data) => {
+        setMeeting(data);
+        // Pre-fill the name saved last time (the form only appears once the meeting has loaded).
+        const savedName = readSavedName();
+        if (savedName) {
+          setName(savedName);
+          setRememberName(true);
+        }
+      })
       .catch((error: ApiError) => setLoadError(error));
   }, [meetingCode]);
 
+  // Turn the preview camera off when it's toggled off or when we leave this page.
+  useEffect(() => () => cameraStream?.getTracks().forEach((track) => track.stop()), [cameraStream]);
+
+  async function toggleVideo() {
+    if (cameraStream) return setCameraStream(null);
+    try {
+      setCameraStream(await navigator.mediaDevices.getUserMedia({ video: true }));
+    } catch {
+      showToast("Camera unavailable. Check your browser’s camera permission.");
+    }
+  }
+
   async function handleJoin(event: FormEvent) {
     event.preventDefault();
-    if (!meetingCode) return;
-    if (!name.trim()) return setNameError("Enter your name to join.");
-    setNameError(null);
+    if (!meetingCode || !name.trim()) return;
+    saveName(rememberName ? name.trim() : null);
     setJoining(true);
     try {
-      const participant = await joinMeeting(meetingCode, name.trim());
-      router.push(`/meeting/${meetingCode}?pid=${participant.id}`);
+      const participant = await joinMeeting(meetingCode, name.trim(), isMuted);
+      // The room turns the camera back on if it was on here.
+      const extras = `${cameraStream ? "&video=1" : ""}${share === "1" ? "&share=1" : ""}`;
+      router.push(`/meeting/${meetingCode}?pid=${participant.id}${extras}`);
     } catch (error) {
       setJoinError((error as Error).message);
       setJoining(false);
@@ -57,9 +91,7 @@ export default function JoinPage({ params }: { params: Promise<{ meetingCode: st
   if (!meeting) {
     return (
       <JoinShell>
-        <div className="flex justify-center py-20">
-          <Loader2 size={28} className="animate-spin text-ink-muted" />
-        </div>
+        <Loader2 size={28} className="mx-auto animate-spin text-ink-muted" />
       </JoinShell>
     );
   }
@@ -70,84 +102,98 @@ export default function JoinPage({ params }: { params: Promise<{ meetingCode: st
   // ---------- Pre-join screen ----------
   return (
     <JoinShell>
-      <div className="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
-        {/* Preview tile: you'll enter muted with video off */}
-        <div className="relative flex aspect-video items-center justify-center rounded-2xl bg-[#323337]">
-          <span className="flex h-[38%] aspect-[7/6] items-center justify-center rounded-[22%] bg-[#4a4b4f] text-[#323337]">
-            <User className="h-3/4 w-3/4" fill="currentColor" strokeWidth={0} aria-hidden="true" />
-          </span>
-          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-2">
-            <span className="flex items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs text-white">
-              <MicOff size={14} className="text-zoom-red" /> Muted
+      <div className="grid w-full items-center gap-8 md:grid-cols-[1.6fr_1fr] md:gap-10">
+        {/* Preview: live camera if on, otherwise Zoom's grey silhouette */}
+        <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-[#323337]">
+          {cameraStream ? (
+            <video
+              ref={(video) => {
+                if (video && video.srcObject !== cameraStream) video.srcObject = cameraStream;
+              }}
+              autoPlay
+              muted
+              playsInline
+              className="h-full w-full -scale-x-100 object-cover"
+            />
+          ) : (
+            <span className="-mt-10 flex h-[32%] aspect-[7/6] items-center justify-center rounded-[22%] bg-[#4a4b4f] text-[#323337] sm:mt-0 sm:h-[38%]">
+              <User className="h-3/4 w-3/4" fill="currentColor" strokeWidth={0} aria-hidden="true" />
             </span>
-            <span className="flex items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs text-white">
-              <VideoOff size={14} className="text-zoom-red" /> Video off
-            </span>
+          )}
+
+          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 rounded-lg bg-black text-white">
+            <PreviewButton label={isMuted ? "Unmute" : "Mute"} onClick={() => setIsMuted((muted) => !muted)}>
+              {isMuted ? <MicOff size={20} className="text-zoom-red" /> : <Mic size={20} />}
+            </PreviewButton>
+            <PreviewButton label={cameraStream ? "Stop Video" : "Start Video"} onClick={toggleVideo}>
+              {cameraStream ? <Video size={20} /> : <VideoOff size={20} className="text-zoom-red" />}
+            </PreviewButton>
           </div>
         </div>
 
         <form onSubmit={handleJoin} noValidate className="space-y-4">
-          <div>
-            <h1 className="text-xl font-semibold">{meeting.title}</h1>
-            <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
-              <CalendarDays size={14} />
+          <h1 className="text-center text-2xl font-semibold text-[#444]">Enter Meeting Info</h1>
+
+          <div className="rounded-xl bg-[#f1f4f6] px-4 py-3 text-sm">
+            <p className="truncate font-semibold">{meeting.title}</p>
+            <p className="mt-0.5 text-ink-muted">
               {formatDayLabel(new Date(meeting.scheduled_at))} · {meetingTimeRange(meeting)}
             </p>
-            <p className="mt-0.5 text-sm text-ink-muted">
-              Hosted by {meeting.host_name} · ID {formatMeetingCode(meeting.meeting_code)}
+            <p className="mt-0.5 text-ink-muted">
+              Host: {meeting.host_name} · ID {formatMeetingCode(meeting.meeting_code)}
             </p>
             {meeting.status === "live" && (
-              <p className="mt-2 inline-block rounded bg-zoom-green/15 px-2 py-0.5 text-xs font-semibold text-[#0e8a3a]">
-                In progress · {meeting.active_participants.length} in meeting
-              </p>
+              <p className="mt-1.5 font-medium text-[#0e8a3a]">In progress · {meeting.active_participants.length} in meeting</p>
             )}
           </div>
 
-          <Field label="Your name" htmlFor="name" error={nameError ?? undefined}>
-            <input
-              id="name"
-              autoFocus
-              value={name}
-              maxLength={100}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter your name"
-              aria-invalid={Boolean(nameError)}
-              className={inputClass(nameError ?? undefined)}
-            />
-          </Field>
+          <div>
+            <label htmlFor="name" className="mb-1.5 block text-sm font-semibold">
+              Your Name
+            </label>
+            <input id="name" autoFocus value={name} maxLength={100} onChange={(e) => setName(e.target.value)} className={inputClass()} />
+          </div>
+
+          <label className="flex items-center gap-2 text-[13px] text-ink">
+            <input type="checkbox" checked={rememberName} onChange={(e) => setRememberName(e.target.checked)} className="h-4 w-4 accent-zoom-blue" />
+            Remember my name for future meetings
+          </label>
 
           {joinError && (
-            <p role="alert" className="rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-zoom-red">
+            <p role="alert" className="rounded-xl bg-[#fdecec] px-3 py-2 text-sm text-zoom-red">
               {joinError}
             </p>
           )}
 
-          <button
-            type="submit"
-            disabled={joining}
-            className="flex w-full items-center justify-center rounded-lg bg-zoom-blue py-2.5 text-sm font-semibold text-white hover:bg-zoom-blue-hover disabled:opacity-60"
-          >
-            {joining ? <Loader2 size={16} className="animate-spin" /> : "Join"}
+          {/* Greyed out until a name is entered, like Zoom. */}
+          <button type="submit" disabled={!name.trim() || joining} className="btn-primary h-10 w-full text-base">
+            {joining ? <Loader2 size={18} className="animate-spin" /> : "Join"}
           </button>
         </form>
       </div>
+      {toast}
     </JoinShell>
+  );
+}
+
+function PreviewButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="flex min-w-[76px] flex-col items-center gap-0.5 rounded-lg px-3 py-1.5 text-xs hover:bg-white/10">
+      {children}
+      {label}
+    </button>
   );
 }
 
 function JoinShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex h-16 max-w-5xl items-center px-4 sm:px-6">
-          <Link href="/" className="text-[19px] font-bold tracking-tight text-zoom-blue">
-            zoom <span className="font-medium text-ink-muted">clone</span>
-          </Link>
-        </div>
-      </header>
-      <main className="mx-auto flex w-full max-w-5xl flex-1 items-center px-4 py-10 sm:px-6">
-        <div className="w-full rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">{children}</div>
-      </main>
+    <div className="flex min-h-screen flex-col bg-white">
+      <div className="px-6 py-6 sm:px-10">
+        <Link href="/" className="inline-flex items-center gap-0.5 text-sm text-zoom-blue hover:underline">
+          <ChevronLeft size={16} /> Back
+        </Link>
+      </div>
+      <main className="mx-auto flex w-full max-w-6xl flex-1 items-center px-4 pb-16 sm:px-10">{children}</main>
     </div>
   );
 }
@@ -155,13 +201,31 @@ function JoinShell({ children }: { children: React.ReactNode }) {
 function JoinMessage({ title, text }: { title: string; text: string }) {
   return (
     <JoinShell>
-      <div className="py-10 text-center">
-        <h1 className="text-xl font-semibold">{title}</h1>
+      <div className="w-full py-10 text-center">
+        <h1 className="text-2xl font-semibold">{title}</h1>
         <p className="mt-2 text-sm text-ink-muted">{text}</p>
-        <Link href="/" className="mt-6 inline-block rounded-lg bg-zoom-blue px-5 py-2 text-sm font-semibold text-white hover:bg-zoom-blue-hover">
+        <Link href="/" className="btn-primary mt-6 h-10 px-6">
           Back to home
         </Link>
       </div>
     </JoinShell>
   );
+}
+
+// "Remember my name" is a small per-browser convenience, so localStorage is fine (wrapped: it can throw).
+function readSavedName(): string | null {
+  try {
+    return localStorage.getItem(SAVED_NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveName(name: string | null) {
+  try {
+    if (name) localStorage.setItem(SAVED_NAME_KEY, name);
+    else localStorage.removeItem(SAVED_NAME_KEY);
+  } catch {
+    // ignore
+  }
 }

@@ -77,7 +77,7 @@ function RecentRow({ meeting, onRejoin }: { meeting: Meeting; onRejoin: (code: s
         <button
           type="button"
           onClick={() => onRejoin(meeting.meeting_code)}
-          className="rounded-lg bg-zoom-blue px-3 py-1.5 text-sm font-semibold text-white hover:bg-zoom-blue-hover"
+          className="btn-primary px-3"
         >
           Rejoin
         </button>

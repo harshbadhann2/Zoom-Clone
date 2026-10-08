@@ -5,18 +5,19 @@ import { CheckCircle2, Loader2 } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { Field, inputClass } from "@/components/JoinMeetingModal";
 import { scheduleMeeting } from "@/lib/api";
-import { CURRENT_USER, formatDayLabel, formatDuration, formatMeetingCode, meetingTimeRange } from "@/lib/meeting";
+import { formatDayLabel, formatDuration, formatMeetingCode, meetingTimeRange } from "@/lib/meeting";
 import type { Meeting } from "@/types/meeting";
 
 const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120, 180, 240];
 
 interface ScheduleMeetingModalProps {
   open: boolean;
+  hostName: string;
   onClose: () => void;
   onScheduled: (meeting: Meeting) => void;
 }
 
-export function ScheduleMeetingModal({ open, onClose, onScheduled }: ScheduleMeetingModalProps) {
+export function ScheduleMeetingModal({ open, hostName, onClose, onScheduled }: ScheduleMeetingModalProps) {
   const [scheduled, setScheduled] = useState<Meeting | null>(null);
 
   function close() {
@@ -30,6 +31,7 @@ export function ScheduleMeetingModal({ open, onClose, onScheduled }: ScheduleMee
         <ScheduledSummary meeting={scheduled} onDone={close} />
       ) : (
         <ScheduleForm
+          hostName={hostName}
           onCancel={close}
           onScheduled={(meeting) => {
             setScheduled(meeting);
@@ -43,9 +45,15 @@ export function ScheduleMeetingModal({ open, onClose, onScheduled }: ScheduleMee
 
 type FieldErrors = { title?: string; when?: string; form?: string };
 
-function ScheduleForm({ onCancel, onScheduled }: { onCancel: () => void; onScheduled: (meeting: Meeting) => void }) {
+interface ScheduleFormProps {
+  hostName: string;
+  onCancel: () => void;
+  onScheduled: (meeting: Meeting) => void;
+}
+
+function ScheduleForm({ hostName, onCancel, onScheduled }: ScheduleFormProps) {
   const defaultStart = nextHalfHour();
-  const [title, setTitle] = useState(`${CURRENT_USER.name}'s Zoom Meeting`);
+  const [title, setTitle] = useState(`${hostName}'s Zoom Meeting`);
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(toDateInputValue(defaultStart));
   const [time, setTime] = useState(toTimeInputValue(defaultStart));
@@ -103,12 +111,12 @@ function ScheduleForm({ onCancel, onScheduled }: { onCancel: () => void; onSched
           maxLength={1000}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Add an agenda or notes for attendees"
-          className={`${inputClass()} resize-none`}
+          className={`${inputClass()} h-auto resize-none py-2`}
         />
       </Field>
 
       <fieldset>
-        <legend className="mb-1.5 text-sm font-medium">When</legend>
+        <legend className="mb-1.5 text-sm">When</legend>
         <div className="grid grid-cols-[1fr_auto] gap-2">
           <input
             type="date"
@@ -129,7 +137,7 @@ function ScheduleForm({ onCancel, onScheduled }: { onCancel: () => void; onSched
           />
         </div>
         {errors.when ? (
-          <p className="mt-1.5 text-xs text-zoom-red">{errors.when}</p>
+          <p role="alert" className="mt-1.5 text-[13px] text-zoom-red">{errors.when}</p>
         ) : (
           <p className="mt-1.5 text-xs text-ink-muted">Time zone: {timeZone}</p>
         )}
@@ -146,20 +154,16 @@ function ScheduleForm({ onCancel, onScheduled }: { onCancel: () => void; onSched
       </Field>
 
       {errors.form && (
-        <p role="alert" className="rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-zoom-red">
+        <p role="alert" className="rounded-xl bg-[#fdecec] px-3 py-2 text-sm text-zoom-red">
           {errors.form}
         </p>
       )}
 
-      <div className="flex justify-end gap-2 pt-1">
-        <button type="button" onClick={onCancel} className="rounded-lg border border-line px-4 py-2 text-sm font-semibold hover:bg-canvas">
+      <div className="flex justify-end gap-2 pt-3">
+        <button type="button" onClick={onCancel} className="btn-secondary">
           Cancel
         </button>
-        <button
-          type="submit"
-          disabled={submitting}
-          className="flex min-w-20 items-center justify-center rounded-lg bg-zoom-blue px-4 py-2 text-sm font-semibold text-white hover:bg-zoom-blue-hover disabled:opacity-60"
-        >
+        <button type="submit" disabled={submitting} className="btn-primary min-w-16">
           {submitting ? <Loader2 size={16} className="animate-spin" /> : "Save"}
         </button>
       </div>
@@ -189,18 +193,18 @@ function ScheduledSummary({ meeting, onDone }: { meeting: Meeting; onDone: () =>
         </div>
       </div>
 
-      <label htmlFor="invite-link" className="mb-1.5 mt-5 block text-sm font-medium">
+      <label htmlFor="invite-link" className="mb-1.5 mt-5 block text-sm">
         Invite link
       </label>
       <div className="flex gap-2">
         <input id="invite-link" readOnly value={meeting.invite_link} onFocus={(e) => e.target.select()} className={`${inputClass()} bg-canvas`} />
-        <button type="button" onClick={copyLink} className="shrink-0 rounded-lg border border-line px-3 text-sm font-semibold hover:bg-canvas">
+        <button type="button" onClick={copyLink} className="btn-secondary h-10 shrink-0">
           {copied ? "Copied!" : "Copy"}
         </button>
       </div>
 
-      <div className="mt-6 flex justify-end">
-        <button type="button" onClick={onDone} className="rounded-lg bg-zoom-blue px-5 py-2 text-sm font-semibold text-white hover:bg-zoom-blue-hover">
+      <div className="mt-8 flex justify-end">
+        <button type="button" onClick={onDone} className="btn-primary">
           Done
         </button>
       </div>

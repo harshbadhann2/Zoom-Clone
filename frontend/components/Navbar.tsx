@@ -3,7 +3,7 @@
 import { Bell, CalendarDays, House, MessageCircle, Search, Settings, Users, Video } from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "@/components/Avatar";
-import { CURRENT_USER } from "@/lib/meeting";
+import type { User } from "@/types/meeting";
 
 // Only "Home" is part of this assignment; the other tabs are visual placeholders like the real app.
 const NAV_ITEMS = [
@@ -13,7 +13,15 @@ const NAV_ITEMS = [
   { label: "Contacts", icon: Users },
 ];
 
-export function Navbar({ onPlaceholderClick }: { onPlaceholderClick: (feature: string) => void }) {
+interface NavbarProps {
+  user: User | null; // null while loading
+  onSignOut: () => void;
+  onPlaceholderClick: (feature: string) => void;
+}
+
+export function Navbar({ user, onSignOut, onPlaceholderClick }: NavbarProps) {
+  const name = user?.name ?? "";
+
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-white">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-6">
@@ -77,23 +85,24 @@ export function Navbar({ onPlaceholderClick }: { onPlaceholderClick: (feature: s
           <details className="relative">
             <summary className="flex cursor-pointer list-none items-center rounded-lg p-1 hover:bg-canvas [&::-webkit-details-marker]:hidden">
               <span className="relative">
-                <Avatar name={CURRENT_USER.name} size={32} />
+                <Avatar name={name || " "} size={32} />
                 <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-zoom-green" />
               </span>
               <span className="sr-only">Profile menu</span>
             </summary>
             <div className="animate-pop-in absolute right-0 mt-2 w-64 rounded-xl border border-line bg-white p-2 shadow-xl">
               <div className="flex items-center gap-3 px-2 py-2">
-                <Avatar name={CURRENT_USER.name} size={40} />
-                <div>
-                  <p className="text-sm font-semibold">{CURRENT_USER.name}</p>
-                  <span className="mt-0.5 inline-block rounded bg-canvas px-1.5 py-0.5 text-[11px] font-medium text-ink-muted">
-                    {CURRENT_USER.plan}
+                <Avatar name={name || " "} size={40} />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{name}</p>
+                  <p className="truncate text-xs text-ink-muted">{user?.email}</p>
+                  <span className="mt-1 inline-block rounded bg-canvas px-1.5 py-0.5 text-[11px] font-medium text-ink-muted">
+                    Basic
                   </span>
                 </div>
               </div>
               <hr className="my-1 border-line" />
-              {["Profile", "Settings", "Sign out"].map((item) => (
+              {["Profile", "Settings"].map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -103,6 +112,10 @@ export function Navbar({ onPlaceholderClick }: { onPlaceholderClick: (feature: s
                   {item}
                 </button>
               ))}
+              <hr className="my-1 border-line" />
+              <button type="button" onClick={onSignOut} className="block w-full rounded-lg px-2 py-2 text-left text-sm hover:bg-canvas">
+                Sign out
+              </button>
             </div>
           </details>
         </div>

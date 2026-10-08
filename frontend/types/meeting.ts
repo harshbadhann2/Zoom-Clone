@@ -26,8 +26,28 @@ export interface Meeting {
   invite_link: string;
 }
 
+export interface Message {
+  id: number;
+  participant_id: number;
+  sender_name: string;
+  text: string;
+  sent_at: string;
+}
+
 export interface MeetingDetail extends Meeting {
   active_participants: Participant[];
+  messages: Message[];
+}
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
 }
 
 export interface ScheduleMeetingInput {

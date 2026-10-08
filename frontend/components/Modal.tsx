@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
 
 interface ModalProps {
   open: boolean;
@@ -12,7 +11,8 @@ interface ModalProps {
 
 /**
  * Uses the browser's native <dialog>, which already handles the Escape key,
- * focus trapping and the dark backdrop for us.
+ * focus trapping and the backdrop for us. Styled like Zoom's dialogs:
+ * large rounded corners, bold title, no header divider.
  */
 export function Modal({ open, title, onClose, children }: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -31,25 +31,15 @@ export function Modal({ open, title, onClose, children }: ModalProps) {
       // Clicking the backdrop (outside the white box) closes the dialog.
       onClick={(event) => event.target === event.currentTarget && onClose()}
       aria-labelledby="modal-title"
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl bg-white p-0 text-ink shadow-2xl"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl bg-white p-0 text-ink shadow-[0_8px_40px_rgba(0,0,0,0.18)]"
     >
       {/* Only render the content while open, so forms start fresh every time. */}
       {open && (
-        <div className="animate-pop-in">
-          <div className="flex items-center justify-between border-b border-line px-6 py-4">
-            <h2 id="modal-title" className="text-base font-semibold">
-              {title}
-            </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="rounded-lg p-1.5 text-ink-muted hover:bg-canvas hover:text-ink"
-            >
-              <X size={18} />
-            </button>
-          </div>
-          <div className="px-6 py-5">{children}</div>
+        <div className="animate-pop-in p-6 sm:p-8">
+          <h2 id="modal-title" className="mb-5 text-xl font-semibold">
+            {title}
+          </h2>
+          {children}
         </div>
       )}
     </dialog>

@@ -1,18 +1,19 @@
 @import "tailwindcss";
 
-/* Zoom-inspired design tokens. Use them as Tailwind classes, e.g. bg-zoom-blue, text-ink-muted. */
+/* Zoom design tokens, measured from Zoom's web app. Use them as Tailwind classes, e.g. bg-zoom-blue. */
 @theme {
-  --font-sans: var(--font-inter), system-ui, sans-serif;
+  /* Zoom's web app uses the operating system font (SF Pro on Mac, Segoe UI on Windows). */
+  --font-sans: system-ui, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  --color-zoom-blue: #0b5cff;
-  --color-zoom-blue-hover: #0a4fdc;
-  --color-zoom-blue-soft: #e8efff;
+  --color-zoom-blue: #0d6bde;
+  --color-zoom-blue-hover: #0b5cc0;
+  --color-zoom-blue-soft: #e7f0fc;
   --color-zoom-orange: #ff742e;
   --color-zoom-orange-hover: #f0621b;
   --color-zoom-red: #e02828;
   --color-zoom-green: #23d959;
 
-  --color-ink: #131619;
+  --color-ink: #2a2b2d;
   --color-ink-muted: #6e7680;
   --color-line: #e5e7eb;
   --color-canvas: #f7f8fa;
@@ -31,7 +32,17 @@ body {
 
 /* Native <dialog> backdrop (used by the Modal component) */
 dialog::backdrop {
-  background: rgb(0 0 0 / 0.4);
+  background: rgb(0 0 0 / 0.25);
+}
+
+/* Shared button styles, matching Zoom's 32px rounded buttons. */
+@layer components {
+  .btn-primary {
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-xl bg-zoom-blue px-4 text-sm font-medium text-white transition-colors hover:bg-zoom-blue-hover disabled:cursor-not-allowed disabled:bg-[#adb1b8]/25 disabled:text-[#9a9fa6];
+  }
+  .btn-secondary {
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-xl bg-[#f1f4f6] px-4 text-sm font-medium text-zoom-blue transition-colors hover:bg-[#e4e9ee];
+  }
 }
 
 @keyframes pop-in {

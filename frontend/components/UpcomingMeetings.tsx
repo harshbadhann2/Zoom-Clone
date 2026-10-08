@@ -103,7 +103,7 @@ function UpcomingRow({ meeting, startingCode, onStart, onCopyInvitation, onDelet
           type="button"
           onClick={() => onStart(meeting.meeting_code)}
           disabled={startingCode !== null}
-          className="ml-1 flex h-8 min-w-16 items-center justify-center rounded-lg bg-zoom-blue px-3 text-sm font-semibold text-white hover:bg-zoom-blue-hover disabled:opacity-60"
+          className="btn-primary ml-1 min-w-16 px-3"
         >
           {isStarting ? <Loader2 size={16} className="animate-spin" /> : isLive ? "Join" : "Start"}
         </button>
@@ -144,7 +144,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
     <div className="flex flex-col items-center px-6 py-10 text-center">
       <p className="text-sm font-medium">Couldn’t load meetings</p>
       <p className="mt-1 text-sm text-ink-muted">{message}</p>
-      <button type="button" onClick={onRetry} className="mt-4 rounded-lg border border-line px-4 py-1.5 text-sm font-semibold hover:bg-canvas">
+      <button type="button" onClick={onRetry} className="btn-secondary mt-4">
         Try again
       </button>
     </div>
