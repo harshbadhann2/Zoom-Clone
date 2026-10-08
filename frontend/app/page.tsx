@@ -17,6 +17,7 @@ import {
   joinMeeting,
 } from "@/lib/api";
 import { buildInvitation, CURRENT_USER } from "@/lib/meeting";
+import { useCurrentTime } from "@/lib/useCurrentTime";
 import type { Meeting } from "@/types/meeting";
 
 type OpenModal = "join" | "share" | "schedule" | null;
@@ -24,6 +25,7 @@ type OpenModal = "join" | "share" | "schedule" | null;
 export default function DashboardPage() {
   const router = useRouter();
   const { toast, showToast } = useToast();
+  const now = useCurrentTime();
 
   const [upcoming, setUpcoming] = useState<Meeting[] | null>(null); // null = loading
   const [recent, setRecent] = useState<Meeting[] | null>(null);
@@ -97,8 +99,8 @@ export default function DashboardPage() {
         <div className="grid items-start gap-8 lg:grid-cols-[1fr_420px] lg:gap-12">
           {/* Left: greeting + the four big action tiles */}
           <section aria-label="Meeting actions" className="flex flex-col items-center lg:pt-10">
-            <h1 suppressHydrationWarning className="text-center text-2xl font-semibold tracking-tight sm:text-3xl">
-              {greeting()}, {CURRENT_USER.name.split(" ")[0]}
+            <h1 className="text-center text-2xl font-semibold tracking-tight sm:text-3xl">
+              {now ? `${greeting(now)}, ${CURRENT_USER.name.split(" ")[0]}` : "\u00a0"}
             </h1>
             <p className="mt-2 text-center text-sm text-ink-muted">Start, join or schedule a meeting.</p>
 
@@ -175,8 +177,8 @@ function ActionTile({ label, icon, onClick, color = "blue", disabled }: ActionTi
   );
 }
 
-function greeting(): string {
-  const hour = new Date().getHours();
+function greeting(now: Date): string {
+  const hour = now.getHours();
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
   return "Good evening";

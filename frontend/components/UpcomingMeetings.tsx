@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { CalendarPlus, Copy, Loader2, Trash2 } from "lucide-react";
 import type { Meeting } from "@/types/meeting";
+import { useCurrentTime } from "@/lib/useCurrentTime";
 import { formatDayLabel, formatMeetingCode, formatTime, meetingTimeRange } from "@/lib/meeting";
 
 interface UpcomingMeetingsProps {
@@ -27,11 +27,10 @@ export function UpcomingMeetings(props: UpcomingMeetingsProps) {
         {/* soft decorative circles */}
         <div className="absolute -right-10 -top-16 h-48 w-48 rounded-full bg-white/10" />
         <div className="absolute -bottom-20 right-16 h-40 w-40 rounded-full bg-white/10" />
-        <p className="relative text-4xl font-semibold tracking-tight sm:text-5xl" suppressHydrationWarning>
-          {formatTime(now)}
-        </p>
-        <p className="relative mt-1 text-sm text-white/85" suppressHydrationWarning>
-          {now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+        {/* "\u00a0" keeps the height steady for the split second before the clock is read */}
+        <p className="relative text-4xl font-semibold tracking-tight sm:text-5xl">{now ? formatTime(now) : "\u00a0"}</p>
+        <p className="relative mt-1 text-sm text-white/85">
+          {now ? now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "\u00a0"}
         </p>
       </div>
 
@@ -150,14 +149,4 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
       </button>
     </div>
   );
-}
-
-/** Re-renders every 10 seconds so the clock stays current. */
-function useCurrentTime() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 10_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
 }

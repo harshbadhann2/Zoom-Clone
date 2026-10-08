@@ -6,8 +6,7 @@
 import { use, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, Loader2, MicOff, VideoOff } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
+import { CalendarDays, Loader2, MicOff, User, VideoOff } from "lucide-react";
 import { Field, inputClass } from "@/components/JoinMeetingModal";
 import { ApiError, getMeeting, joinMeeting } from "@/lib/api";
 import { formatDayLabel, formatMeetingCode, meetingTimeRange, parseMeetingInput } from "@/lib/meeting";
@@ -73,8 +72,10 @@ export default function JoinPage({ params }: { params: Promise<{ meetingCode: st
     <JoinShell>
       <div className="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
         {/* Preview tile: you'll enter muted with video off */}
-        <div className="relative flex aspect-video items-center justify-center rounded-2xl bg-room">
-          <Avatar name={name.trim() || "?"} size={80} />
+        <div className="relative flex aspect-video items-center justify-center rounded-2xl bg-[#323337]">
+          <span className="flex h-[38%] aspect-[7/6] items-center justify-center rounded-[22%] bg-[#4a4b4f] text-[#323337]">
+            <User className="h-3/4 w-3/4" fill="currentColor" strokeWidth={0} aria-hidden="true" />
+          </span>
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-2">
             <span className="flex items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs text-white">
               <MicOff size={14} className="text-zoom-red" /> Muted
