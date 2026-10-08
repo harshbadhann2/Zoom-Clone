@@ -1,0 +1,15 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# SQLite databases (created automatically on startup)
+*.db
+
+# Environment files (commit only the .example versions)
+.env
+.env.local
+
+.DS_Store
