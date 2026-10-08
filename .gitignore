@@ -13,3 +13,6 @@ __pycache__/
 .env.local
 
 .DS_Store
+
+# Vercel CLI project link
+.vercel/
