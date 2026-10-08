@@ -10,10 +10,14 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Meeting, Participant, utc_now
+from app.auth import hash_password
+from app.models import Meeting, Participant, User, utc_now
 from app.services import generate_meeting_code
 
-HOST_NAME = "Harsh Badhan"
+# The default user the assignment asks us to assume. Also shown on the sign-in page.
+DEMO_NAME = "Harsh Badhan"
+DEMO_EMAIL = "demo@zoomclone.app"
+DEMO_PASSWORD = "zoomdemo123"
 
 # (title, description, days from today, UTC time "HH:MM", duration in minutes)
 UPCOMING = [
@@ -41,13 +45,16 @@ def at(days_from_today: int, utc_time: str) -> datetime:
 
 
 def seed_sample_data(db: Session) -> None:
-    if db.scalar(select(Meeting.id).limit(1)) is not None:
+    if db.scalar(select(User.id).limit(1)) is not None:
         return
+
+    host = User(name=DEMO_NAME, email=DEMO_EMAIL, password_hash=hash_password(DEMO_PASSWORD))
+    db.add(host)
 
     for title, description, days_ahead, utc_time, duration in UPCOMING:
         db.add(Meeting(
             meeting_code=generate_meeting_code(db), title=title, description=description,
-            meeting_type="scheduled", status="scheduled", host_name=HOST_NAME,
+            meeting_type="scheduled", status="scheduled", host=host,
             scheduled_at=at(days_ahead, utc_time), duration_minutes=duration,
         ))
         db.flush()  # so the next generate_meeting_code() sees this code
@@ -57,12 +64,12 @@ def seed_sample_data(db: Session) -> None:
         end = start + timedelta(minutes=duration)
         meeting = Meeting(
             meeting_code=generate_meeting_code(db), title=title, description=description,
-            meeting_type="scheduled", status="ended", host_name=HOST_NAME,
+            meeting_type="scheduled", status="ended", host=host,
             scheduled_at=start, duration_minutes=duration, ended_at=end, created_at=start - timedelta(days=1),
         )
         meeting.participants = [
-            Participant(display_name=name, is_host=(name == HOST_NAME), joined_at=start, left_at=end)
-            for name in [HOST_NAME, *guests]
+            Participant(display_name=name, is_host=(name == DEMO_NAME), joined_at=start, left_at=end)
+            for name in [DEMO_NAME, *guests]
         ]
         db.add(meeting)
         db.flush()

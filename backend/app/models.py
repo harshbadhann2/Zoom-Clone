@@ -1,6 +1,10 @@
 """Database tables.
 
-meetings 1 ──< participants   (one meeting has many participants)
+users 1 ──< sessions        (a user can be logged in on several devices)
+users 1 ──< meetings        (the user who hosts the meeting)
+meetings 1 ──< participants (everyone who joined, including guests without an account)
+meetings 1 ──< messages     (in-meeting chat)
+participants 1 ──< messages (who sent each message)
 
 All datetimes are stored as UTC without timezone info (SQLite has no timezone type).
 """
@@ -17,6 +21,30 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)  # stored lowercase
+    password_hash: Mapped[str] = mapped_column(String(200))  # "salt$hash", never the plain password
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    meetings: Mapped[list["Meeting"]] = relationship(back_populates="host")
+
+
+class AuthSession(Base):
+    """A login token. Logging out deletes the row, so the token stops working."""
+
+    __tablename__ = "sessions"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    user: Mapped[User] = relationship()
+
+
 class Meeting(Base):
     __tablename__ = "meetings"
     __table_args__ = (
@@ -28,20 +56,28 @@ class Meeting(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     # The public, shareable 10-digit "Meeting ID". UNIQUE is enforced by the database.
     meeting_code: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    host_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(Text, default="")
     meeting_type: Mapped[str] = mapped_column(String(20))  # "instant" or "scheduled"
     status: Mapped[str] = mapped_column(String(20), default="scheduled")  # scheduled -> live -> ended
-    host_name: Mapped[str] = mapped_column(String(100))
     scheduled_at: Mapped[datetime]
     duration_minutes: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
     ended_at: Mapped[datetime | None]
 
+    host: Mapped[User] = relationship(back_populates="meetings")
     participants: Mapped[list["Participant"]] = relationship(
         back_populates="meeting", cascade="all, delete-orphan", order_by="Participant.joined_at"
     )
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="meeting", cascade="all, delete-orphan", order_by="Message.sent_at"
+    )
+
+    @property
+    def host_name(self) -> str:
+        return self.host.name
 
     @property
     def ends_at(self) -> datetime:
@@ -69,3 +105,20 @@ class Participant(Base):
     left_at: Mapped[datetime | None]  # NULL while the person is still in the meeting
 
     meeting: Mapped[Meeting] = relationship(back_populates="participants")
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="CASCADE"))
+    text: Mapped[str] = mapped_column(String(1000))
+    sent_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    meeting: Mapped[Meeting] = relationship(back_populates="messages")
+    sender: Mapped[Participant] = relationship()
+
+    @property
+    def sender_name(self) -> str:
+        return self.sender.display_name

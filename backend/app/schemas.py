@@ -3,14 +3,14 @@
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.config import FRONTEND_URL
 from app.models import utc_now
 
 
 def as_utc(value: datetime) -> datetime:
-    """Database datetimes are naive UTC; tag them so JSON gets a '+00:00' suffix."""
+    """Database datetimes are naive UTC; tag them so JSON gets a 'Z' suffix."""
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
@@ -19,14 +19,49 @@ UTCDateTime = Annotated[datetime, AfterValidator(as_utc)]
 # Allow a small grace period so a meeting scheduled "right now" isn't rejected.
 PAST_GRACE = timedelta(minutes=1)
 
+EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
-# ---------- Requests ----------
+
+# ---------- Auth ----------
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: str = Field(pattern=EMAIL_PATTERN, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def lowercase_email(cls, email: str) -> str:
+        return email.lower()
+
+
+class SignupRequest(LoginRequest):
+    name: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    email: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserOut
+
+
+# ---------- Meeting requests ----------
 
 class MeetingCreate(BaseModel):
+    """The host is the logged-in user, so it isn't part of the request body."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     meeting_type: Literal["instant", "scheduled"] = "instant"
-    host_name: str = Field(min_length=1, max_length=100)
     title: str = Field(default="", max_length=200)
     description: str = Field(default="", max_length=1000)
     scheduled_at: datetime | None = None  # required for scheduled meetings
@@ -51,8 +86,7 @@ class JoinRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     display_name: str = Field(min_length=1, max_length=100)
-    # No authentication in this assignment: the default user's own client says it is the host.
-    as_host: bool = False
+    is_muted: bool = True  # chosen on the pre-join screen
 
 
 class ParticipantUpdate(BaseModel):
@@ -65,7 +99,14 @@ class HostAction(BaseModel):
     host_participant_id: int
 
 
-# ---------- Responses ----------
+class MessageCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    participant_id: int
+    text: str = Field(min_length=1, max_length=1000)
+
+
+# ---------- Meeting responses ----------
 
 class ParticipantOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -76,6 +117,16 @@ class ParticipantOut(BaseModel):
     is_muted: bool
     joined_at: UTCDateTime
     left_at: UTCDateTime | None
+
+
+class MessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    participant_id: int
+    sender_name: str
+    text: str
+    sent_at: UTCDateTime
 
 
 class MeetingOut(BaseModel):
@@ -101,3 +152,4 @@ class MeetingOut(BaseModel):
 
 class MeetingDetail(MeetingOut):
     active_participants: list[ParticipantOut]
+    messages: list[MessageOut]

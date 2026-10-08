@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Meeting, Participant, utc_now
+from app.models import Meeting, Message, Participant, User, utc_now
 from app.schemas import MeetingCreate
 
 RECENT_MEETINGS_LIMIT = 10
@@ -23,11 +23,11 @@ def generate_meeting_code(db: Session) -> str:
             return code
 
 
-def create_meeting(db: Session, data: MeetingCreate) -> Meeting:
+def create_meeting(db: Session, data: MeetingCreate, host: User) -> Meeting:
     if data.meeting_type == "instant":
         # An instant meeting starts now and is live straight away.
         scheduled_at = utc_now()
-        title = data.title or f"{data.host_name}'s Zoom Meeting"
+        title = data.title or f"{host.name}'s Zoom Meeting"
         status = "live"
     else:
         scheduled_at = data.scheduled_at
@@ -36,11 +36,11 @@ def create_meeting(db: Session, data: MeetingCreate) -> Meeting:
 
     meeting = Meeting(
         meeting_code=generate_meeting_code(db),
+        host=host,
         title=title,
         description=data.description,
         meeting_type=data.meeting_type,
         status=status,
-        host_name=data.host_name,
         scheduled_at=scheduled_at,
         duration_minutes=data.duration_minutes,
     )
@@ -55,15 +55,21 @@ def is_upcoming(meeting: Meeting) -> bool:
     return meeting.status != "ended" and meeting.ends_at > utc_now()
 
 
-def list_upcoming(db: Session) -> list[Meeting]:
-    meetings = db.scalars(select(Meeting).where(Meeting.status != "ended").order_by(Meeting.scheduled_at))
+def list_upcoming(db: Session, user: User) -> list[Meeting]:
+    meetings = db.scalars(
+        select(Meeting)
+        .where(Meeting.host_user_id == user.id, Meeting.status != "ended")
+        .order_by(Meeting.scheduled_at)
+    )
     # ponytail: time filter runs in Python (fine for hundreds of rows); store an ends_at column to filter in SQL.
     return [m for m in meetings if is_upcoming(m)]
 
 
-def list_recent(db: Session) -> list[Meeting]:
+def list_recent(db: Session, user: User) -> list[Meeting]:
     """Recent = ended by the host, or its scheduled time slot is over."""
-    meetings = db.scalars(select(Meeting).order_by(Meeting.scheduled_at.desc()))
+    meetings = db.scalars(
+        select(Meeting).where(Meeting.host_user_id == user.id).order_by(Meeting.scheduled_at.desc())
+    )
     return [m for m in meetings if not is_upcoming(m)][:RECENT_MEETINGS_LIMIT]
 
 
@@ -88,11 +94,13 @@ def require_host(meeting: Meeting, host_participant_id: int) -> Participant:
     return host
 
 
-def join_meeting(db: Session, meeting: Meeting, display_name: str, as_host: bool) -> Participant:
+def join_meeting(db: Session, meeting: Meeting, display_name: str, user: User | None, is_muted: bool) -> Participant:
     if meeting.status == "ended":
         raise HTTPException(status_code=409, detail="This meeting has already ended.")
 
-    participant = Participant(meeting=meeting, display_name=display_name, is_host=as_host)
+    # The host is decided by the server: the signed-in user who owns the meeting.
+    is_host = user is not None and user.id == meeting.host_user_id
+    participant = Participant(meeting=meeting, display_name=display_name, is_host=is_host, is_muted=is_muted)
     meeting.status = "live"  # the first person to join starts a scheduled meeting
     db.add(participant)
     db.commit()
@@ -120,3 +128,14 @@ def mute_all(db: Session, meeting: Meeting) -> None:
         if not participant.is_host:
             participant.is_muted = True
     db.commit()
+
+
+def send_message(db: Session, meeting: Meeting, participant_id: int, text: str) -> Message:
+    sender = get_participant_or_404(meeting, participant_id)
+    if sender.left_at is not None or meeting.status == "ended":
+        raise HTTPException(status_code=409, detail="You're no longer in this meeting.")
+    message = Message(meeting=meeting, sender=sender, text=text)
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return message

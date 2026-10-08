@@ -29,3 +29,12 @@ def client(db_session_factory):
     # Not using `with TestClient(...)`, so the startup seeding doesn't touch the real database.
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def auth_headers(client):
+    """Sign up a fresh user and return the header that proves who they are."""
+    response = client.post(
+        "/api/auth/signup", json={"name": "Harsh Badhan", "email": "harsh@example.com", "password": "secret123"}
+    )
+    return {"Authorization": f"Bearer {response.json()['token']}"}

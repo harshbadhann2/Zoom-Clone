@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import auth
 from app.config import FRONTEND_URL
 from app.database import Base, SessionLocal, engine
 from app.routes import router
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(router)
 
 
@@ -39,6 +41,8 @@ async def readable_validation_error(_request: Request, exc: RequestValidationErr
     """Turn FastAPI's detailed 422 list into one human-readable sentence for the UI."""
     error = exc.errors()[0]
     message = error["msg"].removeprefix("Value error, ")
+    if error["type"] == "string_pattern_mismatch":  # only the email field uses a pattern
+        message = "Enter a valid email address"
     field = error["loc"][-1] if len(error["loc"]) > 1 else None
     if isinstance(field, str):
         message = f"{field.replace('_', ' ').capitalize()}: {message}"
