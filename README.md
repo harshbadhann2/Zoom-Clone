@@ -3,7 +3,7 @@
 A Zoom-style video meeting web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, chat in the meeting, and manage participants as the host.
 
 **Live demo:** https://harsh-zoom-clone.vercel.app. Click **Sign In → Continue as demo user** (`demo@zoomclone.app` / `zoomdemo123`), or create your own account.
-**API:** https://zoom-clone-api-delta.vercel.app (interactive docs at [`/docs`](https://zoom-clone-api-delta.vercel.app/docs))
+**API:** https://zoom-clone-api-gb8b.onrender.com (interactive docs at [`/docs`](https://zoom-clone-api-gb8b.onrender.com/docs)). It runs on Render's free plan, so the first request after 15 idle minutes takes about 30–60 seconds while it wakes up.
 
 ---
 
