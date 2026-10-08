@@ -90,6 +90,7 @@ class MeetingOut(BaseModel):
     scheduled_at: UTCDateTime
     duration_minutes: int
     created_at: UTCDateTime
+    ended_at: UTCDateTime | None
     participant_count: int
 
     @computed_field
