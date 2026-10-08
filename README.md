@@ -210,9 +210,13 @@ On startup, if the database is empty, `app/seed.py` creates the **demo user** (`
 | Part | Host | Settings |
 |---|---|---|
 | Frontend | **Vercel**, root directory `frontend/` | Next.js preset. `NEXT_PUBLIC_API_URL` = the backend URL |
-| Backend | **Railway**, root directory `backend/` | Start command and health check come from `backend/railway.json`. A **volume mounted at `/data`** holds the database. `DATABASE_URL=sqlite:////data/zoom_clone.db`, `FRONTEND_URL=https://harsh-zoom-clone.vercel.app` |
+| Backend | **Render** (free web service) | Defined in [`render.yaml`](render.yaml): root `backend/`, `pip install -r requirements.txt`, `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health check `/api/health`, `FRONTEND_URL=https://harsh-zoom-clone.vercel.app` |
 
-**Why Railway for the backend:** SQLite is a single file, so the backend must run as **one long-running server with a persistent disk**. Serverless platforms can run several copies at once, each with its own temporary file, and meetings would appear and disappear. Railway runs one instance with a volume, so data stays consistent and survives restarts.
+To deploy the backend: Render dashboard → **New → Blueprint** → select this repository → **Apply**.
+
+**Why a single server for the backend:** SQLite is one file, so the API must run as **one long-running process**. Serverless platforms can run several copies at once, each with its own temporary file, and meetings and logins would appear and disappear. A Render web service is one process, so every request sees the same database.
+
+**Free-tier limits (honest note):** Render's free plan has no persistent disk and sleeps after 15 minutes without traffic. The first request after sleeping takes about 30–60 seconds, and a restart resets the database to the seeded sample data (the demo account always works). With a paid persistent disk, set `DATABASE_URL=sqlite:////var/data/zoom_clone.db` and nothing else changes.
 
 ## Assumptions
 
