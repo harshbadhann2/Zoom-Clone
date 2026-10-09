@@ -1,113 +1,68 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Copy, Info, Loader2, MonitorUp, ShieldCheck, WifiOff } from "lucide-react";
-import { VideoTile } from "@/components/room/VideoTile";
-import { ControlBar } from "@/components/room/ControlBar";
-import { ParticipantsPanel } from "@/components/room/ParticipantsPanel";
-import { ChatPanel } from "@/components/room/ChatPanel";
-import { useToast } from "@/components/Toast";
-import {
-  ApiError,
-  endMeeting,
-  getMeeting,
-  leaveMeeting,
-  muteAll,
-  removeParticipant,
-  sendMessage,
-  setMuted,
-} from "@/lib/api";
-import { getParticipantToken } from "@/lib/auth";
-import { formatMeetingCode, screenShareErrorMessage } from "@/lib/meeting";
-import { useMeetingMedia } from "@/lib/useMeetingMedia";
-import type { MeetingDetail, Participant } from "@/types/meeting";
+// The meeting room. The work is split into small pieces:
+//   useMeetingPolling - the meeting data (participants, chat, status), refreshed every 3 seconds
+//   useLocalMedia     - your own camera and screen share
+//   useMeetingMedia   - real audio/video with the other participants (WebRTC)
+//   components/room/  - the header, video grid, toolbar, side panels, audio players and messages
+// This file connects them and handles the buttons.
 
-// No WebSockets: every few seconds we re-fetch the meeting to see who joined, left, or was muted.
-const POLL_INTERVAL_MS = 3000;
+import { use, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ControlBar } from "@/components/room/ControlBar";
+import { ChatPanel } from "@/components/room/ChatPanel";
+import { ParticipantsPanel } from "@/components/room/ParticipantsPanel";
+import { RemoteAudio } from "@/components/room/RemoteAudio";
+import { RoomHeader } from "@/components/room/RoomHeader";
+import { RoomMessage } from "@/components/room/RoomMessage";
+import { SharePrompt } from "@/components/room/SharePrompt";
+import { VideoGrid } from "@/components/room/VideoGrid";
+import { VideoTile } from "@/components/room/VideoTile";
+import { useToast } from "@/components/Toast";
+import { endMeeting, leaveMeeting, muteAll, removeParticipant, sendMessage, setMuted } from "@/lib/api";
+import { getParticipantToken } from "@/lib/auth";
+import { useLocalMedia } from "@/lib/useLocalMedia";
+import { useMeetingMedia } from "@/lib/useMeetingMedia";
+import { useMeetingPolling } from "@/lib/useMeetingPolling";
+
+const MIC_UNAVAILABLE = "Microphone unavailable. Check your browser’s microphone permission.";
 
 interface MeetingRoomProps {
   params: Promise<{ meetingCode: string }>;
+  // pid = our participant id (from the join API); new/share/video = choices made before entering
   searchParams: Promise<{ pid?: string; new?: string; share?: string; video?: string }>;
 }
 
 export default function MeetingRoomPage({ params, searchParams }: MeetingRoomProps) {
   const { meetingCode } = use(params);
   const query = use(searchParams);
-  const myId = Number(query.pid); // our participant id, returned by the join API
+  const myId = Number(query.pid);
   const router = useRouter();
   const { toast, showToast } = useToast();
 
-  const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
-  const [loadError, setLoadError] = useState<ApiError | null>(null);
-  const [wasInMeeting, setWasInMeeting] = useState(false);
-  const [refreshCount, setRefreshCount] = useState(0);
+  const { meeting, setMeeting, loadError, wasInMeeting, refreshNow } = useMeetingPolling(meetingCode, myId);
+  const { cameraStream, screenStream, toggleCamera, toggleScreenShare } = useLocalMedia(query.video === "1", showToast);
   const [leaving, setLeaving] = useState(false);
-
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [sidePanel, setSidePanel] = useState<"participants" | "chat" | null>(null);
   const [seenMessageCount, setSeenMessageCount] = useState(0); // for the unread badge on Chat
-  const [showInfo, setShowInfo] = useState(query.new === "1"); // show the invite link right after creating
   const [showSharePrompt, setShowSharePrompt] = useState(query.share === "1");
-  const sharePickerOpen = useRef(false); // true while the browser's "choose what to share" window is open
 
-  // ---------- Keep meeting data fresh ----------
-  useEffect(() => {
-    const poll = () =>
-      getMeeting(meetingCode)
-        .then((data) => {
-          setMeeting(data);
-          setLoadError(null);
-          // Only this tab's own participant counts (it holds the token), so "removed" is shown to the right person.
-          if (getParticipantToken(myId) && data.active_participants.some((p) => p.id === myId)) setWasInMeeting(true);
-        })
-        .catch((error: ApiError) => setLoadError(error));
-
-    poll();
-    const intervalId = setInterval(poll, POLL_INTERVAL_MS);
-    return () => clearInterval(intervalId);
-  }, [meetingCode, myId, refreshCount]);
-
-  const refreshNow = () => setRefreshCount((count) => count + 1);
-
-  // If the camera was on in the pre-join preview, turn it on again in the room.
-  useEffect(() => {
-    if (query.video !== "1") return;
-    let cancelled = false;
-    navigator.mediaDevices
-      ?.getUserMedia({ video: true })
-      .then((stream) => {
-        if (cancelled) stream.getTracks().forEach((track) => track.stop());
-        else setCameraStream(stream);
-      })
-      .catch(() => undefined); // permission denied: just stay with video off
-    return () => {
-      cancelled = true;
-    };
-  }, [query.video]);
-
-  // Stop the camera / screen share when it's turned off or when we leave the page.
-  useEffect(() => () => cameraStream?.getTracks().forEach((track) => track.stop()), [cameraStream]);
-  useEffect(() => () => screenStream?.getTracks().forEach((track) => track.stop()), [screenStream]);
-
-  // We are only "in" the meeting if the server lists us AND this tab holds our participant token
-  // (a copied room URL opened elsewhere has no token, so it must join properly).
+  // ---------- Who am I? ----------
+  // We are "in" the meeting only if the server lists us AND this tab holds our participant token
+  // (a room URL copied into another browser has no token, so that person must join properly).
   const me = meeting && getParticipantToken(myId) ? meeting.active_participants.find((p) => p.id === myId) : undefined;
   const inRoom = Boolean(me) && meeting?.status !== "ended" && !leaving;
 
-  // ---------- Real audio/video with the other participants (WebRTC) ----------
+  // ---------- Audio/video with the other participants ----------
   const media = useMeetingMedia({
     meetingCode,
     myId,
     peerIds: inRoom ? meeting!.active_participants.filter((p) => p.id !== myId).map((p) => p.id) : [],
     active: inRoom,
     muted: me?.is_muted ?? true,
-    // What others see from us: the shared screen while sharing, otherwise the camera.
+    // What the others see from us: the shared screen while sharing, otherwise the camera.
     outgoingVideo: screenStream?.getVideoTracks()[0] ?? cameraStream?.getVideoTracks()[0] ?? null,
   });
-  const [audioBlocked, setAudioBlocked] = useState(false);
 
   // Joined unmuted (chosen on the pre-join screen): turn the microphone on, or fall back to muted.
   const micAsked = useRef(false);
@@ -116,14 +71,13 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
     micAsked.current = true;
     media.requestMicrophone().then((ok) => {
       if (ok) return;
-      showToast("Microphone unavailable. Check your browser’s microphone permission.");
+      showToast(MIC_UNAVAILABLE);
       setMuted(meetingCode, myId, true).catch(() => undefined);
     });
   }, [inRoom, me, media, meetingCode, myId, showToast]);
 
   // ---------- Screens shown instead of the room ----------
   if (leaving) return <RoomMessage title="Leaving meeting…" spinner />;
-
   if (!meeting) {
     if (loadError?.status === 404) {
       return <RoomMessage title="Meeting not found" text="This Meeting ID is not valid. Please check the link and try again." />;
@@ -131,7 +85,6 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
     if (loadError) return <RoomMessage title="Couldn’t connect to the meeting" text={loadError.message} />;
     return <RoomMessage title="Connecting…" spinner />;
   }
-
   if (meeting.status === "ended") {
     return <RoomMessage title="This meeting has been ended by the host" text={meeting.title} />;
   }
@@ -143,68 +96,40 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
     );
   }
 
-  // ---------- Actions ----------
+  // ---------- Button handlers ----------
   async function handleToggleMute() {
-    if (!me) return;
-    const nextMuted = !me.is_muted;
+    const nextMuted = !me!.is_muted;
     // Unmuting needs the microphone; the browser asks for permission the first time.
-    if (!nextMuted && !(await media.requestMicrophone())) {
-      return showToast("Microphone unavailable. Check your browser’s microphone permission.");
-    }
-    // Update the screen immediately, then tell the server.
+    if (!nextMuted && !(await media.requestMicrophone())) return showToast(MIC_UNAVAILABLE);
+    // Update the screen immediately, then tell the server (everyone else sees it on their next refresh).
     setMeeting((current) =>
       current && {
         ...current,
-        active_participants: current.active_participants.map((p) => (p.id === me.id ? { ...p, is_muted: nextMuted } : p)),
+        active_participants: current.active_participants.map((p) => (p.id === myId ? { ...p, is_muted: nextMuted } : p)),
       },
     );
     try {
-      await setMuted(meetingCode, me.id, nextMuted);
+      await setMuted(meetingCode, myId, nextMuted);
     } catch (error) {
       showToast((error as Error).message);
       refreshNow();
     }
   }
 
-  async function handleToggleVideo() {
-    if (cameraStream) return setCameraStream(null);
-    try {
-      setCameraStream(await navigator.mediaDevices.getUserMedia({ video: true }));
-    } catch {
-      showToast("Camera unavailable. Check your browser’s camera permission.");
-    }
-  }
-
-  async function handleToggleShare() {
+  function handleToggleShare() {
     setShowSharePrompt(false);
-    if (screenStream) return setScreenStream(null); // stopping: the cleanup effect stops the tracks
-    if (sharePickerOpen.current) return; // a second click while the picker is open would open another one
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      return showToast("Screen sharing isn’t supported in this browser or on this device.");
-    }
-    sharePickerOpen.current = true;
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      // The browser's own "Stop sharing" button ends the track; clear our state when that happens.
-      stream.getVideoTracks()[0].addEventListener("ended", () => setScreenStream(null));
-      setScreenStream(stream);
-    } catch (error) {
-      showToast(screenShareErrorMessage(error)); // cancelled, blocked by the OS, or no screen available
-    } finally {
-      sharePickerOpen.current = false;
-    }
+    toggleScreenShare();
   }
 
   async function handleLeave(endForAll: boolean) {
-    if (!me) return;
     if (endForAll) {
       try {
-        await endMeeting(meetingCode, me.id); // the server checks that we really are the host
+        await endMeeting(meetingCode, myId); // the server checks that we really are the host
       } catch (error) {
         return showToast((error as Error).message); // e.g. "Only the host can do this." — stay in the meeting
       }
     } else {
-      await leaveMeeting(meetingCode, me.id).catch(() => undefined); // leave locally even if the server is unreachable
+      await leaveMeeting(meetingCode, myId).catch(() => undefined); // leave locally even if the server is unreachable
     }
     setLeaving(true);
     router.push("/");
@@ -218,14 +143,15 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
   async function handleSendMessage(text: string) {
     try {
-      await sendMessage(meetingCode, me!.id, text);
-      refreshNow(); // fetch right away so the message appears without waiting for the next poll
+      await sendMessage(meetingCode, myId, text);
+      refreshNow(); // fetch right away so the message appears without waiting for the next refresh
     } catch (error) {
       showToast((error as Error).message);
       throw error; // keep the draft in the input
     }
   }
 
+  /** Mute all / remove: the server checks we are the host; show the result either way. */
   async function runHostAction(action: () => Promise<void>, successMessage: string) {
     try {
       await action();
@@ -241,66 +167,30 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
     showToast("Invite link copied");
   }
 
+  // ---------- Layout ----------
   const participants = meeting.active_participants;
   const failedNames = participants.filter((p) => media.status[p.id] === "failed").map((p) => p.display_name);
-  const gridColumns =
-    participants.length === 1 ? "max-w-4xl grid-cols-1" : participants.length <= 4 ? "max-w-6xl grid-cols-1 sm:grid-cols-2" : "max-w-7xl grid-cols-2 lg:grid-cols-3";
 
-  const tiles = participants.map((person: Participant) => (
-    <VideoTile
-      key={person.id}
-      name={person.display_name}
-      isMe={person.id === me.id}
-      isMuted={person.is_muted}
-      stream={person.id === me.id ? cameraStream : media.remote[person.id]?.videoOn ? media.remote[person.id].stream : null}
-      mirrored={person.id === me.id}
-      connection={person.id === me.id ? undefined : media.status[person.id]}
-      compact={Boolean(screenStream)}
-    />
-  ));
+  const tiles = participants.map((person) => {
+    const isMe = person.id === myId;
+    const remote = media.remote[person.id];
+    return (
+      <VideoTile
+        key={person.id}
+        name={person.display_name}
+        isMe={isMe}
+        isMuted={person.is_muted}
+        stream={isMe ? cameraStream : remote?.videoOn ? remote.stream : null}
+        mirrored={isMe}
+        connection={isMe ? undefined : media.status[person.id]}
+        compact={Boolean(screenStream)}
+      />
+    );
+  });
 
   return (
     <div className="flex h-dvh flex-col bg-room text-white">
-      {/* Top bar */}
-      <header className="relative flex h-11 shrink-0 items-center gap-2 px-3">
-        <ShieldCheck size={18} className="text-zoom-green" aria-label="Secure meeting" />
-        <button
-          type="button"
-          onClick={() => setShowInfo((open) => !open)}
-          aria-expanded={showInfo}
-          aria-label="Meeting information"
-          className="rounded-md p-1 text-white/80 hover:bg-room-hover hover:text-white"
-        >
-          <Info size={18} />
-        </button>
-        <h1 className="min-w-0 truncate text-sm font-medium text-white/90">{meeting.title}</h1>
-        {loadError && (
-          <span className="ml-auto flex items-center gap-1.5 rounded-md bg-[#5c1f1f] px-2 py-1 text-xs">
-            <WifiOff size={14} /> Reconnecting…
-          </span>
-        )}
-
-        {showInfo && (
-          <div className="animate-pop-in absolute left-3 top-11 z-20 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl bg-room-panel p-4 shadow-2xl ring-1 ring-white/10">
-            <p className="font-semibold">{meeting.title}</p>
-            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-              <dt className="text-white/55">Meeting ID</dt>
-              <dd>{formatMeetingCode(meeting.meeting_code)}</dd>
-              <dt className="text-white/55">Host</dt>
-              <dd>{meeting.host_name}</dd>
-              <dt className="text-white/55">Invite link</dt>
-              <dd className="truncate text-[#7aa7ff]">{meeting.invite_link}</dd>
-            </dl>
-            <button
-              type="button"
-              onClick={copyInviteLink}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-zoom-blue py-2 text-sm font-semibold hover:bg-zoom-blue-hover"
-            >
-              <Copy size={15} /> Copy invite link
-            </button>
-          </div>
-        )}
-      </header>
+      <RoomHeader meeting={meeting} reconnecting={Boolean(loadError)} showInfoAtStart={query.new === "1"} onCopyInvite={copyInviteLink} />
 
       {failedNames.length > 0 && (
         <p role="status" className="shrink-0 bg-[#5c1f1f] px-4 py-2 text-center text-sm">
@@ -322,63 +212,22 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
       <div className="flex min-h-0 flex-1">
         <main className="relative flex min-w-0 flex-1 p-2 sm:p-3">
-          {screenStream ? (
-            // Sharing layout: shared screen large, participants in a strip beside it.
-            <div className="flex min-h-0 w-full flex-col gap-2 lg:flex-row">
-              <video
-                ref={(video) => {
-                  if (video && video.srcObject !== screenStream) video.srcObject = screenStream;
-                }}
-                autoPlay
-                muted
-                playsInline
-                className="min-h-0 flex-1 rounded-xl bg-black object-contain"
-              />
-              <div className="flex shrink-0 gap-2 overflow-auto lg:w-56 lg:flex-col">{tiles.map((tile) => <div key={tile.key} className="w-40 shrink-0 lg:w-full">{tile}</div>)}</div>
-            </div>
-          ) : (
-            <div className="flex w-full items-center justify-center overflow-y-auto">
-              <div className={`grid w-full gap-2 ${gridColumns}`}>{tiles}</div>
-            </div>
-          )}
-
-          {showSharePrompt && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 p-4">
-              <div className="animate-pop-in w-full max-w-sm rounded-2xl bg-room-panel p-6 text-center shadow-2xl">
-                <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#0e8a3a]">
-                  <MonitorUp size={24} />
-                </span>
-                <h2 className="mt-4 font-semibold">Share your screen</h2>
-                <p className="mt-1 text-sm text-white/65">
-                  Pick a window, tab or your entire screen. Everyone in the meeting will see it.
-                </p>
-                <div className="mt-5 flex gap-2">
-                  <button type="button" onClick={() => setShowSharePrompt(false)} className="flex-1 rounded-lg bg-room-hover py-2 text-sm font-medium">
-                    Not now
-                  </button>
-                  <button type="button" onClick={handleToggleShare} className="flex-1 rounded-lg bg-zoom-blue py-2 text-sm font-semibold">
-                    Share
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          <VideoGrid tiles={tiles} screenStream={screenStream} />
+          {showSharePrompt && <SharePrompt onShare={handleToggleShare} onDismiss={() => setShowSharePrompt(false)} />}
         </main>
 
         {sidePanel === "chat" && (
-          <ChatPanel messages={meeting.messages} myId={me.id} onSend={handleSendMessage} onClose={() => togglePanel("chat")} />
+          <ChatPanel messages={meeting.messages} myId={myId} onSend={handleSendMessage} onClose={() => togglePanel("chat")} />
         )}
         {sidePanel === "participants" && (
           <ParticipantsPanel
             participants={participants}
-            myId={me.id}
+            myId={myId}
             isHost={me.is_host}
             onClose={() => togglePanel("participants")}
             onInvite={copyInviteLink}
-            onMuteAll={() => runHostAction(() => muteAll(meetingCode, me.id), "Everyone has been muted")}
-            onRemove={(person) =>
-              runHostAction(() => removeParticipant(meetingCode, person.id, me.id), `${person.display_name} was removed`)
-            }
+            onMuteAll={() => runHostAction(() => muteAll(meetingCode, myId), "Everyone has been muted")}
+            onRemove={(person) => runHostAction(() => removeParticipant(meetingCode, person.id, myId), `${person.display_name} was removed`)}
           />
         )}
       </div>
@@ -391,67 +240,14 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
         participantCount={participants.length}
         unreadMessages={sidePanel === "chat" ? 0 : meeting.messages.length - seenMessageCount}
         onToggleMute={handleToggleMute}
-        onToggleVideo={handleToggleVideo}
+        onToggleVideo={toggleCamera}
         onToggleShare={handleToggleShare}
         onToggleParticipants={() => togglePanel("participants")}
         onToggleChat={() => togglePanel("chat")}
         onLeave={handleLeave}
       />
-      {/* Other participants' voices. Hidden <audio> players, one per person. */}
-      {Object.entries(media.remote).map(([id, remoteMedia]) => (
-        <RemoteAudio key={id} stream={remoteMedia.stream} onBlocked={() => setAudioBlocked(true)} />
-      ))}
-      {audioBlocked && (
-        <button
-          type="button"
-          onClick={() => {
-            document.querySelectorAll<HTMLAudioElement>("audio[data-remote]").forEach((audio) => audio.play().catch(() => undefined));
-            setAudioBlocked(false);
-          }}
-          className="fixed left-1/2 top-14 z-30 -translate-x-1/2 rounded-lg bg-zoom-blue px-4 py-2 text-sm font-semibold shadow-lg"
-        >
-          Click to turn on meeting audio
-        </button>
-      )}
+      <RemoteAudio remote={media.remote} />
       {toast}
     </div>
-  );
-}
-
-/** Plays one participant's audio. Browsers may block autoplay until the user clicks something. */
-function RemoteAudio({ stream, onBlocked }: { stream: MediaStream; onBlocked: () => void }) {
-  return (
-    <audio
-      data-remote
-      autoPlay
-      ref={(audio) => {
-        if (!audio || audio.srcObject === stream) return;
-        audio.srcObject = stream;
-        audio.play().catch(onBlocked);
-      }}
-    />
-  );
-}
-
-/** Full-screen dark message used for loading, errors, and "meeting ended" states. */
-function RoomMessage({ title, text, spinner, joinCode }: { title: string; text?: string; spinner?: boolean; joinCode?: string }) {
-  return (
-    <main className="flex h-dvh flex-col items-center justify-center bg-room px-6 text-center text-white">
-      {spinner && <Loader2 size={32} className="mb-4 animate-spin text-white/70" />}
-      <h1 className="text-xl font-semibold">{title}</h1>
-      {text && <p className="mt-2 max-w-md text-sm text-white/65">{text}</p>}
-      {!spinner && (
-        <div className="mt-6 flex gap-2">
-          {joinCode && (
-            <Link href={`/join/${joinCode}`} className="rounded-lg bg-zoom-blue px-4 py-2 text-sm font-semibold hover:bg-zoom-blue-hover">
-              Join meeting
-            </Link>
-          )}
-          <Link href="/" className="rounded-lg bg-room-hover px-4 py-2 text-sm font-semibold hover:bg-[#4a4a4a]">
-            Back to home
-          </Link>
-        </div>
-      )}
-    </main>
   );
 }

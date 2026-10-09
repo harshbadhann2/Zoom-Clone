@@ -1,8 +1,12 @@
 "use client";
 
+// The dashboard (home page): greeting, the four action tiles, upcoming and recent meetings.
+// The lists are loaded by useDashboardMeetings; the dialogs live in components/.
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Loader2, MonitorUp, Plus, Video } from "lucide-react";
+import { ActionTile } from "@/components/ActionTile";
 import { Navbar } from "@/components/Navbar";
 import { UpcomingMeetings } from "@/components/UpcomingMeetings";
 import { RecentMeetings } from "@/components/RecentMeetings";
@@ -10,19 +14,11 @@ import { JoinMeetingModal } from "@/components/JoinMeetingModal";
 import { ScheduleMeetingModal } from "@/components/ScheduleMeetingModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { useToast } from "@/components/Toast";
-import {
-  ApiError,
-  createInstantMeeting,
-  deleteMeeting,
-  getMe,
-  getRecentMeetings,
-  getUpcomingMeetings,
-  logOut,
-  startMeeting,
-} from "@/lib/api";
+import { ApiError, createInstantMeeting, deleteMeeting, getMe, logOut, startMeeting } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
 import { buildInvitation } from "@/lib/meeting";
 import { useCurrentTime } from "@/lib/useCurrentTime";
+import { useDashboardMeetings } from "@/lib/useDashboardMeetings";
 import type { Meeting, User } from "@/types/meeting";
 
 type OpenModal = "join" | "share" | "schedule" | "settings" | null;
@@ -33,19 +29,10 @@ export default function DashboardPage() {
   const now = useCurrentTime();
 
   const [user, setUser] = useState<User | null>(null);
-  // Each list has its own data and error, so one failing request doesn't hide the other. null = loading.
-  const [upcoming, setUpcoming] = useState<Meeting[] | null>(null);
-  const [upcomingError, setUpcomingError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<Meeting[] | null>(null);
-  const [recentError, setRecentError] = useState<string | null>(null);
-  const [waitedLong, setWaitedLong] = useState(false);
+  const { upcoming, upcomingError, recent, recentError, slowServer, reload, retry } = useDashboardMeetings();
   const [openModal, setOpenModal] = useState<OpenModal>(null);
   // Which meeting is being started ("new" for New Meeting), so we can show a spinner and block double clicks.
   const [startingCode, setStartingCode] = useState<string | null>(null);
-
-  // Bumping this number re-runs the effect below, which re-fetches the dashboard lists.
-  const [reloadCount, setReloadCount] = useState(0);
-  const reloadMeetings = () => setReloadCount((count) => count + 1);
 
   // Who is signed in? Without a valid token the server answers 401 and we go to the sign-in page.
   useEffect(() => {
@@ -55,48 +42,6 @@ export default function DashboardPage() {
         if (error.status === 401) router.replace("/login");
       });
   }, [router]);
-
-  // Both lists are requested at the same time; each one finishes (or fails) on its own.
-  useEffect(() => {
-    let current = true; // ignore answers that arrive after a newer reload started
-    const failed = (setError: (message: string) => void) => (error: ApiError) => {
-      if (current && error.status !== 401) setError(error.message); // 401 is handled by the redirect above
-    };
-    getUpcomingMeetings()
-      .then((list) => {
-        if (!current) return;
-        setUpcoming(list);
-        setUpcomingError(null);
-      })
-      .catch(failed(setUpcomingError));
-    getRecentMeetings()
-      .then((list) => {
-        if (!current) return;
-        setRecent(list);
-        setRecentError(null);
-      })
-      .catch(failed(setRecentError));
-    return () => {
-      current = false;
-    };
-  }, [reloadCount]);
-
-  /** "Try again" after an error: show the loading skeletons again, then re-fetch. */
-  function retryLoading() {
-    setUpcoming(null);
-    setRecent(null);
-    setUpcomingError(null);
-    setRecentError(null);
-    reloadMeetings();
-  }
-
-  // If the first load takes more than a few seconds, the free backend host is probably waking up: say so.
-  const stillLoading = (upcoming === null && !upcomingError) || (recent === null && !recentError);
-  useEffect(() => {
-    if (!stillLoading) return;
-    const timer = setTimeout(() => setWaitedLong(true), 5000);
-    return () => clearTimeout(timer);
-  }, [stillLoading]);
 
   async function handleSignOut() {
     await logOut().catch(() => undefined); // sign out locally even if the server is unreachable
@@ -141,7 +86,7 @@ export default function DashboardPage() {
     try {
       await deleteMeeting(meeting.meeting_code);
       showToast("Meeting deleted");
-      reloadMeetings();
+      reload();
     } catch (error) {
       showToast((error as Error).message);
     }
@@ -157,7 +102,7 @@ export default function DashboardPage() {
       />
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-12">
-        {stillLoading && waitedLong && (
+        {slowServer && (
           <p role="status" className="mb-6 rounded-xl bg-zoom-blue-soft px-4 py-3 text-sm text-ink">
             <Loader2 size={14} className="mr-2 inline animate-spin align-[-2px]" />
             Waking up the server… The backend runs on a free hosting plan that sleeps when idle, so the first load can take up to a minute.
@@ -194,12 +139,12 @@ export default function DashboardPage() {
             onCopyInvitation={handleCopyInvitation}
             onDelete={handleDelete}
             onSchedule={() => setOpenModal("schedule")}
-            onRetry={retryLoading}
+            onRetry={retry}
           />
         </div>
 
         <div className="mt-10">
-          <RecentMeetings meetings={recent} error={recentError} onRetry={retryLoading} onRejoin={handleStart} />
+          <RecentMeetings meetings={recent} error={recentError} onRetry={retry} onRejoin={handleStart} />
         </div>
       </main>
 
@@ -210,7 +155,7 @@ export default function DashboardPage() {
         onClose={() => setOpenModal(null)}
         onScheduled={() => {
           showToast("Meeting scheduled");
-          reloadMeetings();
+          reload();
         }}
       />
       <SettingsModal
@@ -221,40 +166,13 @@ export default function DashboardPage() {
           setUser(updated); // greeting, avatar and future meetings use the new name right away
           setOpenModal(null);
           showToast("Profile saved");
-          reloadMeetings(); // host names on the lists come from the server
+          reload(); // host names on the lists come from the server
         }}
         onSignOut={handleSignOut}
         onSessionExpired={() => router.replace("/login")}
       />
       {toast}
     </div>
-  );
-}
-
-interface ActionTileProps {
-  label: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  color?: "orange" | "blue";
-  disabled?: boolean;
-}
-
-/** The big rounded-square buttons from the Zoom home screen. */
-function ActionTile({ label, icon, onClick, color = "blue", disabled }: ActionTileProps) {
-  const colors =
-    color === "orange"
-      ? "bg-zoom-orange hover:bg-zoom-orange-hover shadow-[0_8px_20px_-8px_rgba(255,116,46,0.7)]"
-      : "bg-zoom-blue hover:bg-zoom-blue-hover shadow-[0_8px_20px_-8px_rgba(13,107,222,0.7)]";
-
-  return (
-    <button type="button" onClick={onClick} disabled={disabled} className="group flex flex-col items-center gap-2.5 disabled:cursor-wait">
-      <span
-        className={`flex h-20 w-20 items-center justify-center rounded-[22px] text-white transition-transform group-hover:-translate-y-0.5 group-active:translate-y-0 sm:h-[88px] sm:w-[88px] ${colors}`}
-      >
-        {icon}
-      </span>
-      <span className="text-[13px] font-medium text-ink">{label}</span>
-    </button>
   );
 }
 

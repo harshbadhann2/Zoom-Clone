@@ -4,19 +4,19 @@
 //
 // How it works:
 // - Every pair of participants gets one RTCPeerConnection (a "mesh"; fine for small meetings).
-// - The newer participant (higher id) sends an "offer" to each older one; the older one replies
-//   with an "answer". These two messages are relayed by our API (/signals), polled every second.
+// - The newer participant (higher id) "calls": it sends an offer to each older one, who replies
+//   with an answer. Our API relays these two messages (/signals); we check for new ones every second.
 // - The STUN/TURN servers come from our API (/ice-servers), so TURN credentials never live in the code.
-// - Each connection is created with one audio and one video "slot" (transceiver). Turning the mic,
-//   camera or screen share on/off just swaps the track in that slot, so no renegotiation is needed.
-// - Media flows directly between browsers. STUN helps them find each other; when a direct route is
-//   impossible (often on mobile data) only a TURN relay works, if the server has one configured.
+// - Each connection has one audio and one video slot. Turning the mic, camera or screen share
+//   on/off just swaps the track in that slot (see lib/webrtc.ts), so no reconnection is needed.
+// - Media flows directly between browsers. When no direct route exists (often on mobile data),
+//   only a TURN relay works, if the server has one configured.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getIceServers, sendSignal, takeSignals } from "@/lib/api";
+import { createAnswer, createOffer, setOutgoingTracks } from "@/lib/webrtc";
 
 const SIGNAL_POLL_MS = 1000;
-const ICE_GATHERING_TIMEOUT_MS = 2500;
 const RETRY_AFTER_FAILURE_MS = 15_000;
 // If there is no route at all, browsers can stay "connecting" forever instead of reporting "failed".
 const CONNECT_TIMEOUT_MS = 20_000;
@@ -92,23 +92,14 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
     let stopped = false;
     let busy = false;
 
-    const setPeerStatus = (id: number, value: PeerStatus | null) =>
-      setStatus((current) => {
-        const next = { ...current };
-        if (value) next[id] = value;
-        else delete next[id];
-        return next;
-      });
+    const setPeerStatus = (id: number, value: PeerStatus) => setStatus((current) => ({ ...current, [id]: value }));
 
+    /** Hang up with one person. keepStatus: leave "failed" on their tile instead of clearing it. */
     const closePeer = (id: number, keepStatus = false) => {
       connections.get(id)?.close();
       connections.delete(id);
-      if (!keepStatus) setPeerStatus(id, null);
-      setRemote((current) => {
-        const next = { ...current };
-        delete next[id];
-        return next;
-      });
+      if (!keepStatus) setStatus((current) => without(current, id));
+      setRemote((current) => without(current, id));
     };
 
     const createPeer = (id: number) => {
@@ -146,25 +137,17 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
       return pc;
     };
 
+    /** I'm the newer participant: send them an offer. */
     const callPeer = async (id: number) => {
-      const pc = createPeer(id);
-      pc.addTransceiver("audio", { direction: "sendrecv" });
-      pc.addTransceiver("video", { direction: "sendrecv" });
-      setOutgoingTracks(pc, micTrack.current, latest.current.outgoingVideo);
-      await pc.setLocalDescription(await pc.createOffer());
-      await iceGatheringDone(pc);
-      if (!stopped) await sendSignal(meetingCode, myId, id, "offer", pc.localDescription!.sdp);
+      const offer = await createOffer(createPeer(id), micTrack.current, latest.current.outgoingVideo);
+      if (!stopped) await sendSignal(meetingCode, myId, id, "offer", offer);
     };
 
-    const answerPeer = async (id: number, sdp: string) => {
-      closePeer(id); // a new offer replaces any older connection with this person
-      const pc = createPeer(id);
-      await pc.setRemoteDescription({ type: "offer", sdp });
-      for (const transceiver of pc.getTransceivers()) transceiver.direction = "sendrecv";
-      setOutgoingTracks(pc, micTrack.current, latest.current.outgoingVideo);
-      await pc.setLocalDescription(await pc.createAnswer());
-      await iceGatheringDone(pc);
-      if (!stopped) await sendSignal(meetingCode, myId, id, "answer", pc.localDescription!.sdp);
+    /** They called me: reply with an answer. A new offer replaces any older connection with them. */
+    const answerPeer = async (id: number, offer: string) => {
+      closePeer(id);
+      const answer = await createAnswer(createPeer(id), offer, micTrack.current, latest.current.outgoingVideo);
+      if (!stopped) await sendSignal(meetingCode, myId, id, "answer", answer);
     };
 
     const tick = async () => {
@@ -215,24 +198,9 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
   return { remote, status, relayAvailable, hasMicrophone, requestMicrophone };
 }
 
-function setOutgoingTracks(pc: RTCPeerConnection, audio: MediaStreamTrack | null, video: MediaStreamTrack | null) {
-  if (pc.signalingState === "closed") return;
-  for (const transceiver of pc.getTransceivers()) {
-    const kind = transceiver.receiver.track.kind;
-    transceiver.sender.replaceTrack(kind === "audio" ? audio : video).catch(() => undefined);
-  }
-}
-
-/** Wait until the browser has listed its network addresses (or give up after a short time). */
-function iceGatheringDone(pc: RTCPeerConnection): Promise<void> {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ICE_GATHERING_TIMEOUT_MS);
-    pc.addEventListener("icegatheringstatechange", () => {
-      if (pc.iceGatheringState === "complete") {
-        clearTimeout(timer);
-        resolve();
-      }
-    });
-  });
+/** A copy of the record without one person's entry. */
+function without<T>(record: Record<number, T>, id: number): Record<number, T> {
+  const next = { ...record };
+  delete next[id];
+  return next;
 }

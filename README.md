@@ -2,6 +2,8 @@
 
 A Zoom-inspired meeting web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, talk and see each other (peer-to-peer WebRTC audio, camera and screen sharing for small meetings), chat, and manage participants as the host. See [Known limitations](#known-limitations) for what a small demo like this does not cover.
 
+New to the code? Start with **[CODE_GUIDE.md](CODE_GUIDE.md)**, which explains what every file does and walks through each main flow step by step.
+
 **Live demo:** https://harsh-zoom-clone.vercel.app. Click **Sign In → Continue as demo user** (`demo@zoomclone.app` / `zoomdemo123`), or create your own account.
 **API:** https://zoom-clone-api-gb8b.onrender.com (interactive docs at [`/docs`](https://zoom-clone-api-gb8b.onrender.com/docs)). It runs on Render's free plan, so the first request after 15 idle minutes takes about 30–60 seconds while it wakes up.
 
@@ -87,7 +89,7 @@ frontend/
     join/[meetingCode]/page.tsx    Pre-join page: name, mic and camera preview
     meeting/[meetingCode]/page.tsx Meeting room
   components/                      Navbar, modals, meeting lists, toast, avatar
-  components/room/                 VideoTile, ControlBar, ParticipantsPanel, ChatPanel
+  components/room/                 Meeting room pieces: RoomHeader, VideoGrid, VideoTile, ControlBar, panels, RemoteAudio
   lib/api.ts                       Every backend call lives here
   lib/auth.ts                      Stores the login token in the browser
   lib/meeting.ts                   Pure helpers (parse Meeting ID/link, formatting) + tests

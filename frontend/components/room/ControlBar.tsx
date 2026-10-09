@@ -104,7 +104,7 @@ function ControlButton({ label, onClick, children }: { label: string; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className="flex min-w-[48px] flex-col items-center gap-1 whitespace-nowrap rounded-lg px-1 py-1.5 sm:min-w-[76px] sm:px-2 text-white transition-colors hover:bg-room-hover sm:min-w-[76px]"
+      className="flex min-w-[48px] flex-col items-center gap-1 whitespace-nowrap rounded-lg px-1 py-1.5 text-white transition-colors hover:bg-room-hover sm:min-w-[76px] sm:px-2"
     >
       <span className="flex h-[26px] items-center">{children}</span>
       <span className="text-[10px] text-white/85 sm:text-[11px]">{label}</span>
