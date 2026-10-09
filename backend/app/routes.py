@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from app import services
+from app import ice, services
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import Participant, User
@@ -15,6 +15,7 @@ from app.schemas import (
     MeetingOut,
     MessageCreate,
     MessageOut,
+    IceServersOut,
     SignalCreate,
     SignalOut,
     ParticipantOut,
@@ -104,6 +105,12 @@ def leave_meeting(me: Participant = Depends(current_participant), db: Session = 
 def send_message(data: MessageCreate, me: Participant = Depends(current_participant), db: Session = Depends(get_db)):
     """In-meeting chat. Other participants receive it on their next poll of GET /{meeting_code}."""
     return services.send_message(db, me, data.text)
+
+
+@router.get("/{meeting_code}/ice-servers", response_model=IceServersOut)
+def ice_servers(_me: Participant = Depends(current_participant)):
+    """STUN/TURN servers for this participant's WebRTC connections (only for people in the meeting)."""
+    return ice.get_ice_servers()
 
 
 @router.post("/{meeting_code}/signals", status_code=204)

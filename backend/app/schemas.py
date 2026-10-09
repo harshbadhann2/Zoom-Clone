@@ -109,6 +109,11 @@ class SignalCreate(BaseModel):
     sdp: str = Field(min_length=1, max_length=20_000)
 
 
+class IceServersOut(BaseModel):
+    ice_servers: list[dict]
+    relay: bool  # False = no TURN relay configured: some networks won't be able to connect
+
+
 class SignalOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

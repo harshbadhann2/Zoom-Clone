@@ -368,3 +368,45 @@ def test_leaving_clears_pending_signals(client, auth_headers):
     assert client.get(f"/api/meetings/{code}/signals", headers=as_participant(host)).json() == []
     to_guest = {"to": guest["id"], "kind": "answer", "sdp": "x"}
     assert client.post(f"/api/meetings/{code}/signals", json=to_guest, headers=as_participant(host)).status_code == 404
+
+
+# ---------- STUN/TURN servers ----------
+
+def test_ice_servers_default_to_stun_only(client, auth_headers):
+    code = create_instant(client, auth_headers)["meeting_code"]
+    guest = join(client, code, "Guest").json()
+
+    assert client.get(f"/api/meetings/{code}/ice-servers").status_code == 401  # members only
+    body = client.get(f"/api/meetings/{code}/ice-servers", headers=as_participant(guest)).json()
+    assert body == {"ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}], "relay": False}
+
+
+def test_ice_servers_include_a_configured_turn_relay(client, auth_headers, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "TURN_URLS", ["turn:turn.example.com:3478"])
+    monkeypatch.setattr(config, "TURN_USERNAME", "user")
+    monkeypatch.setattr(config, "TURN_CREDENTIAL", "pass")
+    code = create_instant(client, auth_headers)["meeting_code"]
+    guest = join(client, code, "Guest").json()
+
+    body = client.get(f"/api/meetings/{code}/ice-servers", headers=as_participant(guest)).json()
+    assert body["relay"] is True
+    assert {"urls": ["turn:turn.example.com:3478"], "username": "user", "credential": "pass"} in body["ice_servers"]
+
+
+def test_ice_servers_from_cloudflare_and_fallback(client, auth_headers, monkeypatch):
+    from app import config, ice
+    monkeypatch.setattr(config, "CLOUDFLARE_TURN_KEY_ID", "key")
+    monkeypatch.setattr(config, "CLOUDFLARE_TURN_API_TOKEN", "token")
+    code = create_instant(client, auth_headers)["meeting_code"]
+    guest = join(client, code, "Guest").json()
+    url = f"/api/meetings/{code}/ice-servers"
+
+    cloudflare = [{"urls": ["turn:turn.cloudflare.com:3478"], "username": "u", "credential": "c"}]
+    monkeypatch.setattr(ice, "cloudflare_ice_servers", lambda: cloudflare)
+    assert client.get(url, headers=as_participant(guest)).json() == {"ice_servers": cloudflare, "relay": True}
+
+    def unreachable():
+        raise OSError("network down")
+    monkeypatch.setattr(ice, "cloudflare_ice_servers", unreachable)
+    assert client.get(url, headers=as_participant(guest)).json()["relay"] is False  # falls back to STUN
