@@ -58,7 +58,8 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
         .then((data) => {
           setMeeting(data);
           setLoadError(null);
-          if (data.active_participants.some((p) => p.id === myId)) setWasInMeeting(true);
+          // Only this tab's own participant counts (it holds the token), so "removed" is shown to the right person.
+          if (getParticipantToken(myId) && data.active_participants.some((p) => p.id === myId)) setWasInMeeting(true);
         })
         .catch((error: ApiError) => setLoadError(error));
 

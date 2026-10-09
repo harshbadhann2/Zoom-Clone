@@ -58,6 +58,8 @@ SQLite (meetings, participants)
 
 **Authentication:** after signing in, the browser keeps a random token (in `localStorage`) and sends it as `Authorization: Bearer <token>`. FastAPI's `get_current_user` dependency looks the token up in the `sessions` table.
 
+**Meeting permissions:** joining returns a secret **participant token** (kept in `sessionStorage`, so each browser tab is its own participant). Leave, mute, chat and the host controls require it in an `X-Participant-Token` header, and host controls also require that participant to be the host. Participant IDs are visible to everyone in the meeting, so an ID alone must never be enough to act; a regression test (`test_outsider_cannot_act_with_public_ids`) checks this.
+
 ### Project structure
 
 ```
@@ -145,16 +147,16 @@ left_at       NULL = still in the meeting
 | `GET` 🔒 | `/api/meetings/recent` | Your recent meetings (latest 10) |
 | `GET` | `/api/meetings/{meeting_code}` | Meeting details + active participants + chat (public, because guests need it. The room polls this) |
 | `DELETE` 🔒 | `/api/meetings/{meeting_code}` | Delete your meeting if it isn't in progress |
-| `POST` | `/api/meetings/{meeting_code}/join` | `{display_name, is_muted}` → creates a participant (404 if missing, 409 if ended). If the signed-in owner joins, they become host. |
-| `POST` | `/api/meetings/{meeting_code}/messages` | `{participant_id, text}`: send a chat message |
-| `PATCH` | `/api/meetings/{meeting_code}/participants/{id}` | `{is_muted}`: mute or unmute yourself |
-| `POST` | `/api/meetings/{meeting_code}/participants/{id}/leave` | Leave the meeting |
-| `POST` | `/api/meetings/{meeting_code}/end` | Host only: end for everyone |
-| `POST` | `/api/meetings/{meeting_code}/mute-all` | Host only: mute every guest |
-| `POST` | `/api/meetings/{meeting_code}/participants/{id}/remove` | Host only: remove a participant |
+| `POST` | `/api/meetings/{meeting_code}/join` | `{display_name, is_muted}` → the new participant **plus their secret `token`** (404 if missing, 409 if ended). If the signed-in owner joins, they become host. |
+| `POST` 🎟️ | `/api/meetings/{meeting_code}/messages` | `{text}`: send a chat message as yourself |
+| `PATCH` 🎟️ | `/api/meetings/{meeting_code}/participants/me` | `{is_muted}`: mute or unmute yourself |
+| `POST` 🎟️ | `/api/meetings/{meeting_code}/participants/me/leave` | Leave the meeting |
+| `POST` 🎟️ | `/api/meetings/{meeting_code}/end` | Host only: end for everyone |
+| `POST` 🎟️ | `/api/meetings/{meeting_code}/mute-all` | Host only: mute every guest |
+| `POST` 🎟️ | `/api/meetings/{meeting_code}/participants/{id}/remove` | Host only: remove a participant |
 | `GET` | `/api/health` | Health check |
 
-Host-only endpoints take `{"host_participant_id": n}`, and the server returns `403` unless that participant is the meeting's active host. Validation errors return `422` with one readable sentence, e.g. `{"detail": "Meeting time must be in the future"}`.
+🎟️ = requires `X-Participant-Token: <token from join>`. A missing or wrong token returns `401`; a guest calling a host action returns `403`. Validation errors return `422` with one readable sentence, e.g. `{"detail": "Meeting time must be in the future"}`.
 
 ---
 
@@ -182,7 +184,7 @@ npm run dev
 
 ### Tests
 ```bash
-cd backend && pytest               # 28 API tests (meetings, auth, chat, host controls)
+cd backend && pytest               # 29 API tests (meetings, auth, chat, host controls, permissions)
 cd frontend && npm test            # helper unit tests (Node's built-in test runner)
 cd frontend && npm run lint && npm run build
 ```
@@ -209,19 +211,24 @@ On startup, if the database is empty, `app/seed.py` creates the **demo user** (`
 
 | Part | Host | Settings |
 |---|---|---|
-| Frontend | **Vercel**, root directory `frontend/` | Next.js preset. `NEXT_PUBLIC_API_URL` = the backend URL |
+| Frontend | **Vercel**, connected to this GitHub repo, root directory `frontend/` | Next.js preset. `NEXT_PUBLIC_API_URL=https://zoom-clone-api-gb8b.onrender.com`. Every push to `main` deploys automatically. |
 | Backend | **Render** (free web service) | Defined in [`render.yaml`](render.yaml): root `backend/`, `pip install -r requirements.txt`, `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health check `/api/health`, `FRONTEND_URL=https://harsh-zoom-clone.vercel.app` |
 
 To deploy the backend: Render dashboard → **New → Blueprint** → select this repository → **Apply**.
 
 **Why a single server for the backend:** SQLite is one file, so the API must run as **one long-running process**. Serverless platforms can run several copies at once, each with its own temporary file, and meetings and logins would appear and disappear. A Render web service is one process, so every request sees the same database.
 
-**Free-tier limits (honest note):** Render's free plan has no persistent disk and sleeps after 15 minutes without traffic. The first request after sleeping takes about 30–60 seconds, and a restart resets the database to the seeded sample data (the demo account always works). With a paid persistent disk, set `DATABASE_URL=sqlite:////var/data/zoom_clone.db` and nothing else changes.
+**Free-tier limits (honest note):** Render's free plan has **no persistent disk**. Whenever the service restarts, redeploys or sleeps, the SQLite file is recreated with only the seeded sample data (the demo account always works). This was verified in production: a meeting that existed before a backend redeploy returned `404` afterwards. Two mitigations are in place:
+- [`.github/workflows/keep-backend-awake.yml`](.github/workflows/keep-backend-awake.yml) pings `/api/health` every 10 minutes so the service doesn't sleep after 15 idle minutes.
+- `buildFilter` in `render.yaml` makes only `backend/**` changes redeploy the API, so frontend and docs commits don't reset the data.
+
+**For real persistence**, move the backend to a paid Render instance with a disk mounted at `/var/data` and set `DATABASE_URL=sqlite:////var/data/zoom_clone.db`. No code changes are needed.
 
 ## Assumptions
 
 - **Default user + optional accounts.** The brief says to assume a default logged-in user, so a seeded demo account is one click away on the sign-in page. Sign-up/login is implemented as the bonus. Guests joining by ID or link don't need an account, as in Zoom.
-- **No real audio/video transport.** Your own camera and screen share are real but only shown on your own screen. Other participants appear as avatar tiles. Presence, mute state and host actions are real and shared through the API.
+- **No real audio/video transport (WebRTC is out of scope).** Your own camera preview and screen share use the real browser APIs, but they are only shown on your own screen. Other participants' tiles show their name. The microphone is never captured: Mute/Unmute is a shared state (others see your mic icon change, and Mute All changes it), not an audio track. Presence, mute state, chat and host actions are real and shared through the API.
+- **Chat visibility:** the meeting details endpoint is public (guests need it before joining), so anyone who knows a Meeting ID can read that meeting's chat. Sending messages requires being in the meeting.
 - Meeting IDs are 10 random digits generated on the server. Uniqueness is checked before insert and enforced by a `UNIQUE` index.
 - Closing a browser tab without clicking Leave keeps that participant listed until the meeting ends (there is no presence heartbeat).
 
