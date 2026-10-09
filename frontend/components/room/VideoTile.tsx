@@ -4,12 +4,13 @@ interface VideoTileProps {
   name: string;
   isMuted: boolean;
   isMe?: boolean;
-  /** Only the current user's own camera is real; everyone else shows their name. */
+  /** Video to show (your camera, or what another participant is sending); otherwise the name is shown. */
   stream?: MediaStream | null;
+  mirrored?: boolean; // only your own camera is mirrored, like a selfie
   compact?: boolean;
 }
 
-export function VideoTile({ name, isMuted, isMe = false, stream, compact = false }: VideoTileProps) {
+export function VideoTile({ name, isMuted, isMe = false, stream, mirrored = false, compact = false }: VideoTileProps) {
   return (
     <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-xl bg-room-tile">
       {stream ? (
@@ -21,7 +22,7 @@ export function VideoTile({ name, isMuted, isMe = false, stream, compact = false
           autoPlay
           muted
           playsInline
-          className="h-full w-full -scale-x-100 object-cover" // mirrored, like a selfie preview
+          className={`h-full w-full ${mirrored ? "-scale-x-100 object-cover" : "object-contain"}`}
         />
       ) : (
         // Like Zoom: with the camera off, the tile simply shows the person's name.

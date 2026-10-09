@@ -1,6 +1,6 @@
 # Zoom Clone
 
-A Zoom-inspired **meeting management** web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, chat in the meeting, and manage participants as the host. It is not a real-time audio/video conferencing platform: see [Known limitations](#known-limitations).
+A Zoom-inspired meeting web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, talk and see each other (peer-to-peer WebRTC audio, camera and screen sharing for small meetings), chat, and manage participants as the host. See [Known limitations](#known-limitations) for what a small demo like this does not cover.
 
 **Live demo:** https://harsh-zoom-clone.vercel.app. Click **Sign In → Continue as demo user** (`demo@zoomclone.app` / `zoomdemo123`), or create your own account.
 **API:** https://zoom-clone-api-gb8b.onrender.com (interactive docs at [`/docs`](https://zoom-clone-api-gb8b.onrender.com/docs)). It runs on Render's free plan, so the first request after 15 idle minutes takes about 30–60 seconds while it wakes up.
@@ -22,7 +22,7 @@ A Zoom-inspired **meeting management** web app built for the SDE Fullstack assig
 - **Responsive**: works on desktop, tablet and phone (the side panels become full-screen on phones).
 - **Host controls**: **Mute all**, **Remove participant**, and **End meeting for all**. The host is decided by the server (the signed-in owner of the meeting), not by the browser.
 - **In-meeting chat**: messages are stored in SQLite and shared with everyone in the meeting, with an unread badge on the Chat button.
-- **Real camera preview** (`getUserMedia`) and **real screen sharing** (`getDisplayMedia`) on your own screen.
+- **Real audio, camera and screen sharing between participants** using WebRTC (browser-to-browser). Mute really stops your microphone being sent; Mute All silences guests at the source.
 - **Live participant list**: open the invite link in another browser and both rooms show each other, including mute status.
 - Invite-link page (`/join/{id}`), copy invitation, delete a scheduled meeting, and loading, empty and error states throughout.
 
@@ -54,9 +54,13 @@ SQLAlchemy models (app/models.py)
 SQLite (meetings, participants)
 ```
 
-**Real-time updates without WebSockets:** the meeting room fetches `GET /api/meetings/{id}` every 3 seconds. That one response carries the participants and the chat, so it is how a guest sees new messages, notices they were muted by "Mute all" or removed, or learns the meeting ended. It is simple to explain and enough at this scale. Moving to WebSockets would be the next step for real video.
+**Real-time updates without WebSockets:** the meeting room fetches `GET /api/meetings/{id}` every 3 seconds. That one response carries the participants and the chat, so it is how a guest sees new messages, notices they were muted by "Mute all" or removed, or learns the meeting ended.
+
+**Audio and video (WebRTC, `frontend/lib/useMeetingMedia.ts`):** every pair of participants gets one `RTCPeerConnection`, and the media flows directly between the two browsers. To connect, the newer participant sends an SDP **offer** and the other replies with an **answer**; the API only relays these two messages (`/signals`, polled every second, each delivered once and then deleted). Each connection has one audio and one video slot, so turning the mic, camera or screen share on or off just swaps the track in its slot without renegotiating. A public STUN server lets browsers find each other.
 
 **Authentication:** after signing in, the browser keeps a random token (in `localStorage`) and sends it as `Authorization: Bearer <token>`. FastAPI's `get_current_user` dependency looks the token up in the `sessions` table.
+
+**Who is host:** only `POST /start`, called by the dashboard's **Start** / **New meeting** buttons, makes someone host, and only if they are signed in as the meeting's owner. Joining via the invite link (`POST /join`) always makes a guest, even in a browser that is signed in as the owner. There is one host at a time: starting again (for example from a phone) moves the host role to the new session.
 
 **Meeting permissions:** joining returns a secret **participant token** (kept in `sessionStorage`, so each browser tab is its own participant). Leave, mute, chat and the host controls require it in an `X-Participant-Token` header, and host controls also require that participant to be the host. Participant IDs are visible to everyone in the meeting, so an ID alone must never be enough to act; a regression test (`test_outsider_cannot_act_with_public_ids`) checks this.
 
@@ -114,9 +118,15 @@ display_name                                  participant_id  FK → participant
 is_host, is_muted                             text            VARCHAR(1000)
 joined_at                                     sent_at
 left_at       NULL = still in the meeting
+token         UNIQUE secret, only sent to that participant
+
+signals (WebRTC connection setup, deleted once delivered)
+─────────────────────────────────────────────────────────
+id, meeting_id FK → meetings.id (CASCADE), sender_id / recipient_id FK → participants.id (CASCADE),
+kind 'offer' | 'answer' (CHECK), sdp TEXT, created_at
 ```
 
-**Relationships:** users 1──< meetings (host), users 1──< sessions, meetings 1──< participants, meetings 1──< messages, participants 1──< messages (sender).
+**Relationships:** users 1──< meetings (host), users 1──< sessions, meetings 1──< participants, meetings 1──< messages, participants 1──< messages (sender), meetings 1──< signals.
 
 - **Participants are not users.** Guests join with just a display name, as in Zoom, so `participants` stores the name used in that meeting rather than requiring an account.
 - **`id` vs `meeting_code`:** `id` is the internal key used by foreign keys. `meeting_code` is the public, shareable 10-digit "Meeting ID". Keeping them separate means the public ID can never break a relationship.
@@ -148,7 +158,10 @@ left_at       NULL = still in the meeting
 | `GET` 🔒 | `/api/meetings/recent` | Your recent meetings (latest 10) |
 | `GET` | `/api/meetings/{meeting_code}` | Meeting details + active participants + chat (public, because guests need it. The room polls this) |
 | `DELETE` 🔒 | `/api/meetings/{meeting_code}` | Delete your meeting if it isn't in progress |
-| `POST` | `/api/meetings/{meeting_code}/join` | `{display_name, is_muted}` → the new participant **plus their secret `token`** (404 if missing, 409 if ended). If the signed-in owner joins, they become host. |
+| `POST` | `/api/meetings/{meeting_code}/join` | `{display_name, is_muted}` → join **as a guest**: the new participant **plus their secret `token`** (404 if missing, 409 if ended). Never makes you host. |
+| `POST` 🔒 | `/api/meetings/{meeting_code}/start` | Join **as host**. Only the signed-in owner (401 signed out, 403 anyone else). Moves the host role here if another session had it. |
+| `POST` 🎟️ | `/api/meetings/{meeting_code}/signals` | `{to, kind: "offer" \| "answer", sdp}`: relay a WebRTC message to another participant in the meeting |
+| `GET` 🎟️ | `/api/meetings/{meeting_code}/signals` | WebRTC messages addressed to you (each returned once, then deleted) |
 | `POST` 🎟️ | `/api/meetings/{meeting_code}/messages` | `{text}`: send a chat message as yourself |
 | `PATCH` 🎟️ | `/api/meetings/{meeting_code}/participants/me` | `{is_muted}`: mute or unmute yourself |
 | `POST` 🎟️ | `/api/meetings/{meeting_code}/participants/me/leave` | Leave the meeting |
@@ -185,7 +198,7 @@ npm run dev
 
 ### Tests
 ```bash
-cd backend && pytest               # 34 API tests (meetings, auth, profile, chat, host controls, permissions)
+cd backend && pytest               # 39 API tests (meetings, auth, profile, chat, host controls, permissions, signaling)
 cd frontend && npm test            # 6 helper unit tests (Node's built-in test runner)
 cd frontend && npm run lint && npm run build
 ```
@@ -199,6 +212,7 @@ cd frontend && npm run lint && npm run build
 | backend | `DATABASE_URL` | `sqlite:///./zoom_clone.db` | SQLite file location |
 | backend | `FRONTEND_URL` | `http://localhost:3000` | Used to build invite links and as the only allowed CORS origin |
 | frontend | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Base URL of the FastAPI backend |
+| frontend | `NEXT_PUBLIC_ICE_SERVERS` | *(unset → Google's public STUN server)* | Optional JSON list of STUN/TURN servers for WebRTC, e.g. `[{"urls":"turn:turn.example.com:3478","username":"…","credential":"…"}]`. Needed for networks that block direct connections (see Known limitations). Don't commit real TURN credentials. |
 
 The backend reads real environment variables, and the defaults work for local development. No secrets are needed or committed.
 
@@ -231,14 +245,14 @@ To deploy the backend: Render dashboard → **New → Blueprint** → select thi
 
 1. **Cold starts.** The backend runs on Render's free plan, which stops it after 15 minutes without requests. The next request waits for it to start again (measured ≈ 32–43 s; warm requests ≈ 0.4–0.8 s). The dashboard shows "Waking up the server…" meanwhile, and requests time out after 75 s with a Retry button.
 2. **Data is not guaranteed to persist.** SQLite lives on the free plan's temporary disk (`DATABASE_URL=sqlite:///./zoom_clone.db`). Every restart, redeploy or sleep resets it to the seeded sample data (verified: a meeting returned 404 after a redeploy). The demo account always works; accounts and meetings you create can disappear. Keeping the service awake does **not** make the data durable; only a persistent disk would.
-3. **Camera and screen sharing are local previews.** They use the real browser APIs, but the video is shown only on your own screen.
-4. **Screen sharing is not transmitted** to other participants (the sharing banner says "Preview only").
-5. **No real-time audio/video conferencing** (no WebRTC/media server). The microphone is never captured; Mute/Unmute, presence, chat and host controls are real shared state synced through the API.
+3. **Audio/video connect directly between browsers, using a STUN server only.** That works on most home and mobile networks. Strict corporate or university firewalls and some mobile carriers (symmetric NAT) need a **TURN relay**, which isn't configured because there's no free, credential-free one. Set `NEXT_PUBLIC_ICE_SERVERS` to add one. When two people can't connect directly they still see each other's names, chat and mute state, but not audio/video.
+4. **Small meetings only.** Each participant sends a copy of their audio/video to every other participant (a "mesh"). That's fine for 2–4 people; larger meetings would need a media server (SFU).
+5. **Basic media features.** There's no audio-device picker, echo test, recording, or "who is speaking" detection. A participant who changes their own browser code could ignore Mute All (the server can't force a browser's microphone off). Closing a tab without clicking Leave keeps that person listed until the meeting ends.
 
 ## Assumptions
 
 - **Default user + optional accounts.** The brief says to assume a default logged-in user, so a seeded demo account is one click away on the sign-in page. Sign-up/login is implemented as the bonus. Guests joining by ID or link don't need an account, as in Zoom.
-- **Media is out of scope (see Known limitations 3–5).** Camera preview and screen share use `getUserMedia` / `getDisplayMedia`; cancelling the share picker, the operating system blocking screen recording, and unsupported browsers (most phones) each show a clear message. Other participants' tiles show their name.
+- **Media permissions:** the microphone is requested the first time you unmute (or on joining, if you chose Unmute on the pre-join page). A denied microphone, a cancelled screen-share picker, the operating system blocking screen recording, and unsupported browsers (most phones can't share their screen) each show a clear message. If the browser blocks audio autoplay, a "Click to turn on meeting audio" button appears.
 - **Chat visibility:** the meeting details endpoint is public (guests need it before joining), so anyone who knows a Meeting ID can read that meeting's chat. Sending messages requires being in the meeting.
 - Meeting IDs are 10 random digits generated on the server. Uniqueness is checked before insert and enforced by a `UNIQUE` index.
 - Closing a browser tab without clicking Leave keeps that participant listed until the meeting ends (there is no presence heartbeat).

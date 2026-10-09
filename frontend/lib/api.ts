@@ -8,6 +8,7 @@ import type {
   Message,
   Participant,
   ScheduleMeetingInput,
+  Signal,
   User,
 } from "@/types/meeting";
 import { getParticipantToken, getToken, saveParticipantToken } from "@/lib/auth";
@@ -80,9 +81,16 @@ export const scheduleMeeting = (input: ScheduleMeetingInput) =>
 
 // ---------- Participants ----------
 
-/** If the signed-in host joins their own meeting, the server makes them host. */
+/** Join as a guest (invite link / Join dialog). Never makes you host. */
 export async function joinMeeting(code: string, displayName: string, isMuted = true): Promise<JoinResponse> {
   const participant = await post<JoinResponse>(`/api/meetings/${code}/join`, { display_name: displayName, is_muted: isMuted });
+  saveParticipantToken(participant.id, participant.token);
+  return participant;
+}
+
+/** Join as the host (dashboard Start / New meeting). The server checks you are the signed-in owner. */
+export async function startMeeting(code: string, displayName: string): Promise<JoinResponse> {
+  const participant = await post<JoinResponse>(`/api/meetings/${code}/start`, { display_name: displayName });
   saveParticipantToken(participant.id, participant.token);
   return participant;
 }
@@ -99,6 +107,14 @@ export const leaveMeeting = (code: string, myId: number) =>
 
 export const sendMessage = (code: string, myId: number, text: string) =>
   post<Message>(`/api/meetings/${code}/messages`, { text }, asParticipant(myId));
+
+// ---------- WebRTC signaling (offers/answers relayed between two participants) ----------
+
+export const sendSignal = (code: string, myId: number, to: number, kind: "offer" | "answer", sdp: string) =>
+  post<void>(`/api/meetings/${code}/signals`, { to, kind, sdp }, asParticipant(myId));
+
+export const takeSignals = (code: string, myId: number) =>
+  request<Signal[]>(`/api/meetings/${code}/signals`, { headers: asParticipant(myId) });
 
 // ---------- Host controls (the server checks that myId's token belongs to the host) ----------
 

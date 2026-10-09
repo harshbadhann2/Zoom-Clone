@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { getParticipantToken } from "@/lib/auth";
 import { formatMeetingCode, screenShareErrorMessage } from "@/lib/meeting";
+import { useMeetingMedia } from "@/lib/useMeetingMedia";
 import type { MeetingDetail, Participant } from "@/types/meeting";
 
 // No WebSockets: every few seconds we re-fetch the meeting to see who joined, left, or was muted.
@@ -91,6 +92,35 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
   useEffect(() => () => cameraStream?.getTracks().forEach((track) => track.stop()), [cameraStream]);
   useEffect(() => () => screenStream?.getTracks().forEach((track) => track.stop()), [screenStream]);
 
+  // We are only "in" the meeting if the server lists us AND this tab holds our participant token
+  // (a copied room URL opened elsewhere has no token, so it must join properly).
+  const me = meeting && getParticipantToken(myId) ? meeting.active_participants.find((p) => p.id === myId) : undefined;
+  const inRoom = Boolean(me) && meeting?.status !== "ended" && !leaving;
+
+  // ---------- Real audio/video with the other participants (WebRTC) ----------
+  const media = useMeetingMedia({
+    meetingCode,
+    myId,
+    peerIds: inRoom ? meeting!.active_participants.filter((p) => p.id !== myId).map((p) => p.id) : [],
+    active: inRoom,
+    muted: me?.is_muted ?? true,
+    // What others see from us: the shared screen while sharing, otherwise the camera.
+    outgoingVideo: screenStream?.getVideoTracks()[0] ?? cameraStream?.getVideoTracks()[0] ?? null,
+  });
+  const [audioBlocked, setAudioBlocked] = useState(false);
+
+  // Joined unmuted (chosen on the pre-join screen): turn the microphone on, or fall back to muted.
+  const micAsked = useRef(false);
+  useEffect(() => {
+    if (!inRoom || !me || me.is_muted || media.hasMicrophone || micAsked.current) return;
+    micAsked.current = true;
+    media.requestMicrophone().then((ok) => {
+      if (ok) return;
+      showToast("Microphone unavailable. Check your browser’s microphone permission.");
+      setMuted(meetingCode, myId, true).catch(() => undefined);
+    });
+  }, [inRoom, me, media, meetingCode, myId, showToast]);
+
   // ---------- Screens shown instead of the room ----------
   if (leaving) return <RoomMessage title="Leaving meeting…" spinner />;
 
@@ -101,10 +131,6 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
     if (loadError) return <RoomMessage title="Couldn’t connect to the meeting" text={loadError.message} />;
     return <RoomMessage title="Connecting…" spinner />;
   }
-
-  // We are only "in" the meeting if the server lists us AND this tab holds our participant token
-  // (a copied room URL opened elsewhere has no token, so it must join properly).
-  const me = getParticipantToken(myId) ? meeting.active_participants.find((p) => p.id === myId) : undefined;
 
   if (meeting.status === "ended") {
     return <RoomMessage title="This meeting has been ended by the host" text={meeting.title} />;
@@ -121,6 +147,10 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
   async function handleToggleMute() {
     if (!me) return;
     const nextMuted = !me.is_muted;
+    // Unmuting needs the microphone; the browser asks for permission the first time.
+    if (!nextMuted && !(await media.requestMicrophone())) {
+      return showToast("Microphone unavailable. Check your browser’s microphone permission.");
+    }
     // Update the screen immediately, then tell the server.
     setMeeting((current) =>
       current && {
@@ -167,13 +197,17 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
   async function handleLeave(endForAll: boolean) {
     if (!me) return;
-    setLeaving(true);
-    try {
-      if (endForAll) await endMeeting(meetingCode, me.id);
-      else await leaveMeeting(meetingCode, me.id);
-    } finally {
-      router.push("/");
+    if (endForAll) {
+      try {
+        await endMeeting(meetingCode, me.id); // the server checks that we really are the host
+      } catch (error) {
+        return showToast((error as Error).message); // e.g. "Only the host can do this." — stay in the meeting
+      }
+    } else {
+      await leaveMeeting(meetingCode, me.id).catch(() => undefined); // leave locally even if the server is unreachable
     }
+    setLeaving(true);
+    router.push("/");
   }
 
   /** Open/close a side panel. Opening or closing marks all chat messages as read. */
@@ -217,7 +251,8 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
       name={person.display_name}
       isMe={person.id === me.id}
       isMuted={person.is_muted}
-      stream={person.id === me.id ? cameraStream : null}
+      stream={person.id === me.id ? cameraStream : media.remote[person.id]?.videoOn ? media.remote[person.id].stream : null}
+      mirrored={person.id === me.id}
       compact={Boolean(screenStream)}
     />
   ));
@@ -268,7 +303,6 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
       {screenStream && (
         <div className="flex shrink-0 items-center justify-center gap-3 bg-[#0e8a3a] py-1.5 text-sm font-medium">
           You are screen sharing
-          <span className="hidden font-normal text-white/85 sm:inline">· Preview only: this demo doesn’t send video to other participants</span>
           <button type="button" onClick={handleToggleShare} className="rounded-md bg-zoom-red px-3 py-0.5 text-xs font-semibold hover:bg-[#c81f1f]">
             Stop Share
           </button>
@@ -305,7 +339,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
                 </span>
                 <h2 className="mt-4 font-semibold">Share your screen</h2>
                 <p className="mt-1 text-sm text-white/65">
-                  Pick a window, tab or your entire screen. In this demo it is shown to you as a preview; video isn’t sent to others.
+                  Pick a window, tab or your entire screen. Everyone in the meeting will see it.
                 </p>
                 <div className="mt-5 flex gap-2">
                   <button type="button" onClick={() => setShowSharePrompt(false)} className="flex-1 rounded-lg bg-room-hover py-2 text-sm font-medium">
@@ -352,8 +386,39 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
         onToggleChat={() => togglePanel("chat")}
         onLeave={handleLeave}
       />
+      {/* Other participants' voices. Hidden <audio> players, one per person. */}
+      {Object.entries(media.remote).map(([id, remoteMedia]) => (
+        <RemoteAudio key={id} stream={remoteMedia.stream} onBlocked={() => setAudioBlocked(true)} />
+      ))}
+      {audioBlocked && (
+        <button
+          type="button"
+          onClick={() => {
+            document.querySelectorAll<HTMLAudioElement>("audio[data-remote]").forEach((audio) => audio.play().catch(() => undefined));
+            setAudioBlocked(false);
+          }}
+          className="fixed left-1/2 top-14 z-30 -translate-x-1/2 rounded-lg bg-zoom-blue px-4 py-2 text-sm font-semibold shadow-lg"
+        >
+          Click to turn on meeting audio
+        </button>
+      )}
       {toast}
     </div>
+  );
+}
+
+/** Plays one participant's audio. Browsers may block autoplay until the user clicks something. */
+function RemoteAudio({ stream, onBlocked }: { stream: MediaStream; onBlocked: () => void }) {
+  return (
+    <audio
+      data-remote
+      autoPlay
+      ref={(audio) => {
+        if (!audio || audio.srcObject === stream) return;
+        audio.srcObject = stream;
+        audio.play().catch(onBlocked);
+      }}
+    />
   );
 }
 

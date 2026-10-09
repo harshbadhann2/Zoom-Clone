@@ -17,8 +17,8 @@ import {
   getMe,
   getRecentMeetings,
   getUpcomingMeetings,
-  joinMeeting,
   logOut,
+  startMeeting,
 } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
 import { buildInvitation } from "@/lib/meeting";
@@ -104,9 +104,9 @@ export default function DashboardPage() {
     router.replace("/login");
   }
 
-  /** Join our own meeting. The server sees our sign-in token and makes us the host. */
+  /** Start our own meeting as host. The server checks that we are the signed-in owner. */
   async function enterAsHost(code: string, isNewMeeting = false) {
-    const me = await joinMeeting(code, user?.name ?? "Host");
+    const me = await startMeeting(code, user?.name ?? "Host");
     router.push(`/meeting/${code}?pid=${me.id}${isNewMeeting ? "&new=1" : ""}`);
   }
 

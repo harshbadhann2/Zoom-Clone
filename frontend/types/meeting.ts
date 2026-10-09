@@ -30,6 +30,13 @@ export interface JoinResponse extends Participant {
   token: string; // secret: only the person who joined receives it
 }
 
+export interface Signal {
+  id: number;
+  sender_id: number;
+  kind: "offer" | "answer";
+  sdp: string;
+}
+
 export interface Message {
   id: number;
   participant_id: number;
