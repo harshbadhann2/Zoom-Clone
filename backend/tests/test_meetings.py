@@ -195,6 +195,22 @@ def test_leave_meeting_removes_from_active_list(client, auth_headers):
     assert client.get(f"/api/meetings/{code}").json()["active_participants"] == []
 
 
+def test_last_person_leaving_closes_the_meeting(client, auth_headers):
+    instant = create_instant(client, auth_headers)["meeting_code"]
+    scheduled = schedule(client, auth_headers).json()["meeting_code"]
+    for code in (instant, scheduled):
+        host = start(client, code, auth_headers).json()
+        guest = join(client, code).json()
+        client.post(f"/api/meetings/{code}/participants/me/leave", headers=as_participant(host))
+        assert client.get(f"/api/meetings/{code}").json()["status"] == "live"  # someone is still in it
+        client.post(f"/api/meetings/{code}/participants/me/leave", headers=as_participant(guest))
+
+    # An abandoned instant meeting is over; a scheduled one goes back to waiting for its time.
+    assert client.get(f"/api/meetings/{instant}").json()["status"] == "ended"
+    assert client.get(f"/api/meetings/{scheduled}").json()["status"] == "scheduled"
+    assert instant in [m["meeting_code"] for m in client.get("/api/meetings/recent", headers=auth_headers).json()]
+
+
 # ---------- Chat ----------
 
 def test_chat_messages_are_shared_with_the_meeting(client, auth_headers):

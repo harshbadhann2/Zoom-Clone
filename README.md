@@ -5,7 +5,7 @@ A Zoom-inspired meeting web app built for the SDE Fullstack assignment. You can 
 New to the code? Start with **[CODE_GUIDE.md](CODE_GUIDE.md)**, which explains what every file does and walks through each main flow step by step.
 
 **Live demo:** https://harsh-zoom-clone.vercel.app. Click **Sign In → Continue as demo user** (`demo@zoomclone.app` / `zoomdemo123`), or create your own account.
-**API:** https://zoom-clone-api-gb8b.onrender.com (interactive docs at [`/docs`](https://zoom-clone-api-gb8b.onrender.com/docs)). It runs on Render's free plan, so the first request after 15 idle minutes takes about 30–60 seconds while it wakes up.
+**API:** https://zoom-clone-api-gb8b.onrender.com/docs (interactive API documentation). It runs on Render's free plan, so the first request after 15 idle minutes takes about 30–60 seconds while it wakes up.
 
 ---
 

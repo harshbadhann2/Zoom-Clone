@@ -44,7 +44,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
   const { cameraStream, screenStream, toggleCamera, toggleScreenShare } = useLocalMedia(query.video === "1", showToast);
   const [leaving, setLeaving] = useState(false);
   const [sidePanel, setSidePanel] = useState<"participants" | "chat" | null>(null);
-  const [seenMessageCount, setSeenMessageCount] = useState(0); // for the unread badge on Chat
+  const [lastSeenMessageId, setLastSeenMessageId] = useState(0); // for the unread badge on Chat
   const [showSharePrompt, setShowSharePrompt] = useState(query.share === "1");
 
   // ---------- Who am I? ----------
@@ -137,7 +137,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
   /** Open/close a side panel. Opening or closing marks all chat messages as read. */
   function togglePanel(panel: "participants" | "chat") {
-    setSeenMessageCount(meeting!.messages.length);
+    setLastSeenMessageId(meeting!.messages.at(-1)?.id ?? 0);
     setSidePanel((current) => (current === panel ? null : panel));
   }
 
@@ -169,6 +169,10 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
   // ---------- Layout ----------
   const participants = meeting.active_participants;
+  // Unread = messages from others, sent after we joined and after we last opened a panel.
+  const unreadMessages = meeting.messages.filter(
+    (m) => m.id > lastSeenMessageId && m.participant_id !== myId && Date.parse(m.sent_at) >= Date.parse(me.joined_at),
+  ).length;
   const failedNames = participants.filter((p) => media.status[p.id] === "failed").map((p) => p.display_name);
 
   const tiles = participants.map((person) => {
@@ -238,7 +242,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
         isSharing={Boolean(screenStream)}
         isHost={me.is_host}
         participantCount={participants.length}
-        unreadMessages={sidePanel === "chat" ? 0 : meeting.messages.length - seenMessageCount}
+        unreadMessages={sidePanel === "chat" ? 0 : unreadMessages}
         onToggleMute={handleToggleMute}
         onToggleVideo={toggleCamera}
         onToggleShare={handleToggleShare}

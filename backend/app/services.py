@@ -134,6 +134,14 @@ def leave_meeting(db: Session, participant: Participant) -> None:
     if participant.left_at is None:
         participant.left_at = utc_now()
         delete_signals_of(db, participant)
+        meeting = participant.meeting
+        if not meeting.active_participants:
+            # The last person left: an instant meeting is over; a scheduled one can be started again later.
+            if meeting.meeting_type == "instant":
+                meeting.status = "ended"
+                meeting.ended_at = participant.left_at
+            else:
+                meeting.status = "scheduled"
         db.commit()
 
 

@@ -14,7 +14,7 @@ export function VideoGrid({ tiles, screenStream }: { tiles: React.ReactElement[]
           autoPlay
           muted
           playsInline
-          className="min-h-0 flex-1 rounded-xl bg-black object-contain"
+          className="min-h-0 min-w-0 flex-1 rounded-xl bg-black object-contain"
         />
         <div className="flex shrink-0 gap-2 overflow-auto lg:w-56 lg:flex-col">
           {tiles.map((tile) => (

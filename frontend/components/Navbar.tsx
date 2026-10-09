@@ -42,6 +42,7 @@ export function Navbar({ user, onSignOut, onOpenSettings, onPlaceholderClick }: 
               <button
                 key={label}
                 type="button"
+                aria-label={label} // the text below is hidden on phones
                 aria-current={active ? "page" : undefined}
                 onClick={() => !active && onPlaceholderClick(label)}
                 className={`flex flex-col items-center gap-0.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition-colors md:px-4 ${
