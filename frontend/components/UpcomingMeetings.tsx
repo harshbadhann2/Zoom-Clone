@@ -23,7 +23,7 @@ export function UpcomingMeetings(props: UpcomingMeetingsProps) {
 
   return (
     <section aria-labelledby="upcoming-heading" className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
-      <div className="relative overflow-hidden bg-[linear-gradient(135deg,#0b5cff_0%,#3d7bff_55%,#7aa7ff_100%)] px-6 py-7 text-white">
+      <div className="relative overflow-hidden bg-[linear-gradient(135deg,#0d6bde_0%,#3d86ea_55%,#7fb0f2_100%)] px-6 py-7 text-white">
         {/* soft decorative circles */}
         <div className="absolute -right-10 -top-16 h-48 w-48 rounded-full bg-white/10" />
         <div className="absolute -bottom-20 right-16 h-40 w-40 rounded-full bg-white/10" />

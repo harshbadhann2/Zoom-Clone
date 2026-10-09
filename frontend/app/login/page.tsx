@@ -35,14 +35,16 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center bg-white px-4">
-      <div className="flex w-full max-w-[400px] flex-1 flex-col items-center justify-center py-12">
+    <main className="flex min-h-screen flex-col items-center bg-white px-6">
+      {/* Spacing measured from Zoom's web landing page (app.zoom.us/wc) */}
+      <div className="flex w-full max-w-[432px] flex-col items-center pb-12 pt-24 lg:pt-36">
         <p className="text-5xl font-bold tracking-tight text-zoom-blue">zoom</p>
         <p className="text-4xl font-bold tracking-tight text-[#0b1a33]">Clone</p>
 
-        <div className="mt-16 w-full">
+        <div className="mt-16 w-full lg:mt-24">
           {view === "start" && (
-            <div className="mx-auto flex w-60 flex-col gap-5">
+            // Full-width 48px buttons on phones/tablets, 240x40 on desktop, exactly like Zoom.
+            <div className="mx-auto flex w-full flex-col gap-3 lg:w-60 lg:gap-5">
               <button type="button" onClick={() => setView("signin")} className={bigButton(true)}>
                 Sign In
               </button>
@@ -185,9 +187,9 @@ function FormError({ message }: { message: string | null }) {
   );
 }
 
-/** The 40px-tall buttons from Zoom's landing page (blue primary, or white with a grey border). */
+/** Zoom's landing-page buttons: 48px tall below 1024px wide, 40px on desktop (blue, or white with a grey border). */
 function bigButton(primary: boolean) {
-  return `flex h-10 items-center justify-center rounded-[10px] text-base font-medium transition-colors disabled:opacity-60 ${
+  return `flex h-12 items-center justify-center rounded-xl text-base font-medium transition-colors disabled:opacity-60 lg:h-10 lg:rounded-[10px] ${
     primary
       ? "bg-zoom-blue text-white hover:bg-zoom-blue-hover"
       : "border border-[#939ba4] bg-white text-ink hover:bg-[#f1f4f6]"

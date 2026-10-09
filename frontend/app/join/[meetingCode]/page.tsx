@@ -102,9 +102,10 @@ export default function JoinPage({ params, searchParams }: JoinPageProps) {
   // ---------- Pre-join screen ----------
   return (
     <JoinShell>
-      <div className="grid w-full items-center gap-8 md:grid-cols-[1.6fr_1fr] md:gap-10">
+      {/* Side by side on desktop; stacked (preview on top, narrow form below) on tablets and phones, like Zoom. */}
+      <div className="grid w-full items-center gap-8 lg:grid-cols-[1.6fr_1fr] lg:gap-10">
         {/* Preview: live camera if on, otherwise Zoom's grey silhouette */}
-        <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-[#323337]">
+        <div className="relative mx-auto flex aspect-video w-full max-w-[448px] items-center justify-center overflow-hidden rounded-2xl bg-[#323337] lg:max-w-none">
           {cameraStream ? (
             <video
               ref={(video) => {
@@ -131,8 +132,8 @@ export default function JoinPage({ params, searchParams }: JoinPageProps) {
           </div>
         </div>
 
-        <form onSubmit={handleJoin} noValidate className="space-y-4">
-          <h1 className="text-center text-2xl font-semibold text-[#444]">Enter Meeting Info</h1>
+        <form onSubmit={handleJoin} noValidate className="mx-auto w-full max-w-[400px] space-y-4 lg:max-w-none">
+          <h1 className="text-center text-2xl font-bold text-[#4a4a4a]">Enter Meeting Info</h1>
 
           <div className="rounded-xl bg-[#f1f4f6] px-4 py-3 text-sm">
             <p className="truncate font-semibold">{meeting.title}</p>

@@ -1,0 +1,14 @@
+# Render's free plan stops the API after 15 idle minutes, and its temporary disk (the SQLite file)
+# is wiped when that happens. Pinging the health check every 10 minutes keeps it running.
+name: Keep backend awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl --fail --silent --show-error --max-time 90 https://zoom-clone-api-gb8b.onrender.com/api/health

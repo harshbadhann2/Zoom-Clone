@@ -190,7 +190,7 @@ function ActionTile({ label, icon, onClick, color = "blue", disabled }: ActionTi
   const colors =
     color === "orange"
       ? "bg-zoom-orange hover:bg-zoom-orange-hover shadow-[0_8px_20px_-8px_rgba(255,116,46,0.7)]"
-      : "bg-zoom-blue hover:bg-zoom-blue-hover shadow-[0_8px_20px_-8px_rgba(11,92,255,0.7)]";
+      : "bg-zoom-blue hover:bg-zoom-blue-hover shadow-[0_8px_20px_-8px_rgba(13,107,222,0.7)]";
 
   return (
     <button type="button" onClick={onClick} disabled={disabled} className="group flex flex-col items-center gap-2.5 disabled:cursor-wait">
