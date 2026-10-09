@@ -1,14 +1,21 @@
-# Render's free plan stops the API after 15 idle minutes, and its temporary disk (the SQLite file)
-# is wiped when that happens. Pinging the health check every 10 minutes keeps it running.
+# Render's free plan stops the API after 15 minutes without requests. Restarting takes ~30-60 s,
+# and the free plan's temporary disk (the SQLite file) is reset when that happens.
+# This pings the health check every 10 minutes to reduce that. GitHub runs schedules on a
+# best-effort basis (they can be delayed or skipped), so this is NOT an uptime guarantee.
 name: Keep backend awake
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Off the top of the hour (minute :00 is GitHub's busiest time, when schedules are most delayed).
+    - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
+
+permissions: {} # the job only calls a public URL; it needs no access to the repository
 
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
-      - run: curl --fail --silent --show-error --max-time 90 https://zoom-clone-api-gb8b.onrender.com/api/health
+      - name: Ping the API health check (fails the run on any non-2xx response)
+        run: curl --fail --silent --show-error --max-time 90 https://zoom-clone-api-gb8b.onrender.com/api/health

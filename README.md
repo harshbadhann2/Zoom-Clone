@@ -1,6 +1,6 @@
 # Zoom Clone
 
-A Zoom-style video meeting web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, chat in the meeting, and manage participants as the host.
+A Zoom-inspired **meeting management** web app built for the SDE Fullstack assignment. You can sign in, start an instant meeting, join one by Meeting ID or invite link, schedule meetings for later, chat in the meeting, and manage participants as the host. It is not a real-time audio/video conferencing platform: see [Known limitations](#known-limitations).
 
 **Live demo:** https://harsh-zoom-clone.vercel.app. Click **Sign In → Continue as demo user** (`demo@zoomclone.app` / `zoomdemo123`), or create your own account.
 **API:** https://zoom-clone-api-gb8b.onrender.com (interactive docs at [`/docs`](https://zoom-clone-api-gb8b.onrender.com/docs)). It runs on Render's free plan, so the first request after 15 idle minutes takes about 30–60 seconds while it wakes up.
@@ -219,18 +219,26 @@ To deploy the backend: Render dashboard → **New → Blueprint** → select thi
 
 **Why a single server for the backend:** SQLite is one file, so the API must run as **one long-running process**. Serverless platforms can run several copies at once, each with its own temporary file, and meetings and logins would appear and disappear. A Render web service is one process, so every request sees the same database.
 
-**Free-tier limits (honest note):** Render's free plan has **no persistent disk**. Whenever the service restarts, redeploys or sleeps, the SQLite file is recreated with only the seeded sample data (the demo account always works). This was verified in production: a meeting that existed before a backend redeploy returned `404` afterwards. Two mitigations are in place:
-- [`.github/workflows/keep-backend-awake.yml`](.github/workflows/keep-backend-awake.yml) asks GitHub Actions to ping `/api/health` every 10 minutes. **This is best-effort only:** GitHub may delay or skip scheduled runs, and in practice no scheduled run fired during the first ~50 minutes after it was added. For a reliable keep-alive, add a free external uptime monitor (e.g. UptimeRobot, 5-minute interval) for `https://zoom-clone-api-gb8b.onrender.com/api/health`.
+**Free-tier limits (honest note):** Render's free plan has **no persistent disk**. Whenever the service restarts, redeploys or sleeps, the SQLite file is recreated with only the seeded sample data (the demo account always works). This was verified in production: a meeting that existed before a backend redeploy returned `404` afterwards. Two mitigations reduce (but do not remove) the risk:
+- [`.github/workflows/keep-backend-awake.yml`](.github/workflows/keep-backend-awake.yml) asks GitHub Actions to ping `/api/health` every 10 minutes. **This is best-effort only:** GitHub may delay or skip scheduled runs, and in practice no scheduled run fired in the first ~2 hours after it was added (manual runs succeed). For a dependable keep-alive, add an external uptime monitor such as UptimeRobot (free plan: personal, non-commercial use, 5-minute checks) for `https://zoom-clone-api-gb8b.onrender.com/api/health`. Note that keeping one free service awake all month uses ≈ 744 of the workspace's 750 free Render hours.
 - `buildFilter` in `render.yaml` makes only `backend/**` changes redeploy the API, so frontend and docs commits don't reset the data.
 
-**What a sleeping backend looks like:** measured cold start ≈ 32 s for the first request (warm requests ≈ 0.4–0.8 s). The dashboard shows "Waking up the server…" after 5 seconds of loading, every request times out after 75 seconds with a Retry button, and each list loads or fails on its own.
+**What a sleeping backend looks like:** measured cold starts of ≈ 32–43 s for the first request (warm requests ≈ 0.4–0.8 s). The dashboard shows "Waking up the server…" after 5 seconds of loading, every request times out after 75 seconds with a Retry button, and each list loads or fails on its own.
 
 **For real persistence**, move the backend to a paid Render instance with a disk mounted at `/var/data` and set `DATABASE_URL=sqlite:////var/data/zoom_clone.db`. No code changes are needed.
+
+## Known limitations
+
+1. **Cold starts.** The backend runs on Render's free plan, which stops it after 15 minutes without requests. The next request waits for it to start again (measured ≈ 32–43 s; warm requests ≈ 0.4–0.8 s). The dashboard shows "Waking up the server…" meanwhile, and requests time out after 75 s with a Retry button.
+2. **Data is not guaranteed to persist.** SQLite lives on the free plan's temporary disk (`DATABASE_URL=sqlite:///./zoom_clone.db`). Every restart, redeploy or sleep resets it to the seeded sample data (verified: a meeting returned 404 after a redeploy). The demo account always works; accounts and meetings you create can disappear. Keeping the service awake does **not** make the data durable; only a persistent disk would.
+3. **Camera and screen sharing are local previews.** They use the real browser APIs, but the video is shown only on your own screen.
+4. **Screen sharing is not transmitted** to other participants (the sharing banner says "Preview only").
+5. **No real-time audio/video conferencing** (no WebRTC/media server). The microphone is never captured; Mute/Unmute, presence, chat and host controls are real shared state synced through the API.
 
 ## Assumptions
 
 - **Default user + optional accounts.** The brief says to assume a default logged-in user, so a seeded demo account is one click away on the sign-in page. Sign-up/login is implemented as the bonus. Guests joining by ID or link don't need an account, as in Zoom.
-- **No real audio/video transport (WebRTC is out of scope).** Your own camera preview and screen share use the real browser APIs (`getUserMedia` / `getDisplayMedia`), but they are only shown on your own screen; the sharing banner says "Preview only" so nobody is misled. Cancelling the picker, the operating system blocking screen recording, and unsupported browsers (most phones) each show a clear message. Other participants' tiles show their name. The microphone is never captured: Mute/Unmute is a shared state (others see your mic icon change, and Mute All changes it), not an audio track. Presence, mute state, chat and host actions are real and shared through the API.
+- **Media is out of scope (see Known limitations 3–5).** Camera preview and screen share use `getUserMedia` / `getDisplayMedia`; cancelling the share picker, the operating system blocking screen recording, and unsupported browsers (most phones) each show a clear message. Other participants' tiles show their name.
 - **Chat visibility:** the meeting details endpoint is public (guests need it before joining), so anyone who knows a Meeting ID can read that meeting's chat. Sending messages requires being in the meeting.
 - Meeting IDs are 10 random digits generated on the server. Uniqueness is checked before insert and enforced by a `UNIQUE` index.
 - Closing a browser tab without clicking Leave keeps that participant listed until the meeting ends (there is no presence heartbeat).
