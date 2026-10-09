@@ -12,7 +12,7 @@ A Zoom-style video meeting web app built for the SDE Fullstack assignment. You c
 ### Mandatory
 | Feature | What it does |
 |---|---|
-| **Landing dashboard** | Navbar with Home/Meetings/Chat/Contacts tabs, search, notifications, settings and a profile menu (placeholders, plus a working Sign out). Zoom's four action tiles, a live-clock card with **Upcoming meetings**, and a **Recent meetings** list. |
+| **Landing dashboard** | Navbar with Home/Meetings/Chat/Contacts tabs, search and notifications (placeholders), a working **Settings** dialog (gear icon or profile menu → Profile/Settings: change your display name, saved on the server) and Sign out. Zoom's four action tiles, a live-clock card with **Upcoming meetings**, and a **Recent meetings** list. |
 | **Instant meeting** | **New meeting** creates the meeting on the server, which generates a unique 10-digit Meeting ID and invite link and stores both in SQLite. The host is then taken into the room, where the invite link is shown. |
 | **Join meeting** | Same flow as Zoom. The **Join Meeting** dialog takes a Meeting ID (`614 838 5880`, `614-838-5880`) **or** a full invite link and checks with the server that the meeting exists. The **pre-join page** (`/join/{id}`, also what invite links open) then asks for your display name and lets you choose microphone and camera with a live preview. |
 | **Schedule meeting** | Topic, description, date, time (in your own time zone) and duration. The server validates and stores it, and the meeting appears under Upcoming with its generated link. |
@@ -141,6 +141,7 @@ left_at       NULL = still in the meeting
 | `POST` | `/api/auth/signup` | `{name, email, password}` → `{token, user}` (409 if the email is taken) |
 | `POST` | `/api/auth/login` | `{email, password}` → `{token, user}` (401 if wrong) |
 | `GET` 🔒 | `/api/auth/me` | The signed-in user |
+| `PATCH` 🔒 | `/api/auth/me` | `{name}`: change your own display name (only ever changes the signed-in user) |
 | `POST` | `/api/auth/logout` | Deletes the session |
 | `POST` 🔒 | `/api/meetings` | Create a meeting hosted by you. `meeting_type: "instant"` starts now. `"scheduled"` requires `title` and a future `scheduled_at`. |
 | `GET` 🔒 | `/api/meetings/upcoming` | Your upcoming meetings |
@@ -184,8 +185,8 @@ npm run dev
 
 ### Tests
 ```bash
-cd backend && pytest               # 29 API tests (meetings, auth, chat, host controls, permissions)
-cd frontend && npm test            # helper unit tests (Node's built-in test runner)
+cd backend && pytest               # 34 API tests (meetings, auth, profile, chat, host controls, permissions)
+cd frontend && npm test            # 6 helper unit tests (Node's built-in test runner)
 cd frontend && npm run lint && npm run build
 ```
 
@@ -219,15 +220,17 @@ To deploy the backend: Render dashboard → **New → Blueprint** → select thi
 **Why a single server for the backend:** SQLite is one file, so the API must run as **one long-running process**. Serverless platforms can run several copies at once, each with its own temporary file, and meetings and logins would appear and disappear. A Render web service is one process, so every request sees the same database.
 
 **Free-tier limits (honest note):** Render's free plan has **no persistent disk**. Whenever the service restarts, redeploys or sleeps, the SQLite file is recreated with only the seeded sample data (the demo account always works). This was verified in production: a meeting that existed before a backend redeploy returned `404` afterwards. Two mitigations are in place:
-- [`.github/workflows/keep-backend-awake.yml`](.github/workflows/keep-backend-awake.yml) pings `/api/health` every 10 minutes so the service doesn't sleep after 15 idle minutes.
+- [`.github/workflows/keep-backend-awake.yml`](.github/workflows/keep-backend-awake.yml) asks GitHub Actions to ping `/api/health` every 10 minutes. **This is best-effort only:** GitHub may delay or skip scheduled runs, and in practice no scheduled run fired during the first ~50 minutes after it was added. For a reliable keep-alive, add a free external uptime monitor (e.g. UptimeRobot, 5-minute interval) for `https://zoom-clone-api-gb8b.onrender.com/api/health`.
 - `buildFilter` in `render.yaml` makes only `backend/**` changes redeploy the API, so frontend and docs commits don't reset the data.
+
+**What a sleeping backend looks like:** measured cold start ≈ 32 s for the first request (warm requests ≈ 0.4–0.8 s). The dashboard shows "Waking up the server…" after 5 seconds of loading, every request times out after 75 seconds with a Retry button, and each list loads or fails on its own.
 
 **For real persistence**, move the backend to a paid Render instance with a disk mounted at `/var/data` and set `DATABASE_URL=sqlite:////var/data/zoom_clone.db`. No code changes are needed.
 
 ## Assumptions
 
 - **Default user + optional accounts.** The brief says to assume a default logged-in user, so a seeded demo account is one click away on the sign-in page. Sign-up/login is implemented as the bonus. Guests joining by ID or link don't need an account, as in Zoom.
-- **No real audio/video transport (WebRTC is out of scope).** Your own camera preview and screen share use the real browser APIs, but they are only shown on your own screen. Other participants' tiles show their name. The microphone is never captured: Mute/Unmute is a shared state (others see your mic icon change, and Mute All changes it), not an audio track. Presence, mute state, chat and host actions are real and shared through the API.
+- **No real audio/video transport (WebRTC is out of scope).** Your own camera preview and screen share use the real browser APIs (`getUserMedia` / `getDisplayMedia`), but they are only shown on your own screen; the sharing banner says "Preview only" so nobody is misled. Cancelling the picker, the operating system blocking screen recording, and unsupported browsers (most phones) each show a clear message. Other participants' tiles show their name. The microphone is never captured: Mute/Unmute is a shared state (others see your mic icon change, and Mute All changes it), not an audio track. Presence, mute state, chat and host actions are real and shared through the API.
 - **Chat visibility:** the meeting details endpoint is public (guests need it before joining), so anyone who knows a Meeting ID can read that meeting's chat. Sending messages requires being in the meeting.
 - Meeting IDs are 10 random digits generated on the server. Uniqueness is checked before insert and enforced by a `UNIQUE` index.
 - Closing a browser tab without clicking Leave keeps that participant listed until the meeting ends (there is no presence heartbeat).

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Copy, Info, Loader2, MonitorUp, ShieldCheck, WifiOff } from "lucide-react";
@@ -20,7 +20,7 @@ import {
   setMuted,
 } from "@/lib/api";
 import { getParticipantToken } from "@/lib/auth";
-import { formatMeetingCode } from "@/lib/meeting";
+import { formatMeetingCode, screenShareErrorMessage } from "@/lib/meeting";
 import type { MeetingDetail, Participant } from "@/types/meeting";
 
 // No WebSockets: every few seconds we re-fetch the meeting to see who joined, left, or was muted.
@@ -50,6 +50,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
   const [seenMessageCount, setSeenMessageCount] = useState(0); // for the unread badge on Chat
   const [showInfo, setShowInfo] = useState(query.new === "1"); // show the invite link right after creating
   const [showSharePrompt, setShowSharePrompt] = useState(query.share === "1");
+  const sharePickerOpen = useRef(false); // true while the browser's "choose what to share" window is open
 
   // ---------- Keep meeting data fresh ----------
   useEffect(() => {
@@ -146,15 +147,21 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
 
   async function handleToggleShare() {
     setShowSharePrompt(false);
-    if (screenStream) return setScreenStream(null);
-    if (!navigator.mediaDevices?.getDisplayMedia) return showToast("Screen sharing isn’t supported on this device.");
+    if (screenStream) return setScreenStream(null); // stopping: the cleanup effect stops the tracks
+    if (sharePickerOpen.current) return; // a second click while the picker is open would open another one
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      return showToast("Screen sharing isn’t supported in this browser or on this device.");
+    }
+    sharePickerOpen.current = true;
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       // The browser's own "Stop sharing" button ends the track; clear our state when that happens.
       stream.getVideoTracks()[0].addEventListener("ended", () => setScreenStream(null));
       setScreenStream(stream);
-    } catch {
-      // The user closed the browser's share picker; nothing to do.
+    } catch (error) {
+      showToast(screenShareErrorMessage(error)); // cancelled, blocked by the OS, or no screen available
+    } finally {
+      sharePickerOpen.current = false;
     }
   }
 
@@ -261,6 +268,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
       {screenStream && (
         <div className="flex shrink-0 items-center justify-center gap-3 bg-[#0e8a3a] py-1.5 text-sm font-medium">
           You are screen sharing
+          <span className="hidden font-normal text-white/85 sm:inline">· Preview only: this demo doesn’t send video to other participants</span>
           <button type="button" onClick={handleToggleShare} className="rounded-md bg-zoom-red px-3 py-0.5 text-xs font-semibold hover:bg-[#c81f1f]">
             Stop Share
           </button>
@@ -296,7 +304,9 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
                   <MonitorUp size={24} />
                 </span>
                 <h2 className="mt-4 font-semibold">Share your screen</h2>
-                <p className="mt-1 text-sm text-white/65">Pick a window, tab or your entire screen to share.</p>
+                <p className="mt-1 text-sm text-white/65">
+                  Pick a window, tab or your entire screen. In this demo it is shown to you as a preview; video isn’t sent to others.
+                </p>
                 <div className="mt-5 flex gap-2">
                   <button type="button" onClick={() => setShowSharePrompt(false)} className="flex-1 rounded-lg bg-room-hover py-2 text-sm font-medium">
                     Not now

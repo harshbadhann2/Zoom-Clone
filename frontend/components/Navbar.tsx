@@ -16,10 +16,11 @@ const NAV_ITEMS = [
 interface NavbarProps {
   user: User | null; // null while loading
   onSignOut: () => void;
+  onOpenSettings: () => void;
   onPlaceholderClick: (feature: string) => void;
 }
 
-export function Navbar({ user, onSignOut, onPlaceholderClick }: NavbarProps) {
+export function Navbar({ user, onSignOut, onOpenSettings, onPlaceholderClick }: NavbarProps) {
   const name = user?.name ?? "";
 
   return (
@@ -75,7 +76,7 @@ export function Navbar({ user, onSignOut, onPlaceholderClick }: NavbarProps) {
           <button
             type="button"
             aria-label="Settings"
-            onClick={() => onPlaceholderClick("Settings")}
+            onClick={onOpenSettings}
             className="rounded-lg p-2 text-ink-muted hover:bg-canvas hover:text-ink"
           >
             <Settings size={20} />
@@ -106,7 +107,10 @@ export function Navbar({ user, onSignOut, onPlaceholderClick }: NavbarProps) {
                 <button
                   key={item}
                   type="button"
-                  onClick={() => onPlaceholderClick(item)}
+                  onClick={(event) => {
+                    event.currentTarget.closest("details")?.removeAttribute("open"); // close the menu
+                    onOpenSettings();
+                  }}
                   className="block w-full rounded-lg px-2 py-2 text-left text-sm hover:bg-canvas"
                 >
                   {item}

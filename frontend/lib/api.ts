@@ -14,6 +14,10 @@ import { getParticipantToken, getToken, saveParticipantToken } from "@/lib/auth"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// The free backend host can take ~30-60 s to wake up after being idle, so the limit is generous,
+// but a request can never hang forever: after this it fails with a clear message and a Retry button.
+const REQUEST_TIMEOUT_MS = 75_000;
+
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
     super(message);
@@ -28,8 +32,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, { ...options, headers });
-  } catch {
+    response = await fetch(`${API_URL}${path}`, { ...options, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new ApiError("The server took too long to respond. Please try again.", 0);
+    }
     throw new ApiError("Can't reach the server. Check your connection and try again.", 0);
   }
 
@@ -56,6 +63,8 @@ export const signUp = (name: string, email: string, password: string) =>
 export const logIn = (email: string, password: string) => post<AuthResponse>("/api/auth/login", { email, password });
 export const logOut = () => post<void>("/api/auth/logout");
 export const getMe = () => request<User>("/api/auth/me");
+export const updateProfile = (name: string) =>
+  request<User>("/api/auth/me", { method: "PATCH", body: JSON.stringify({ name }) });
 
 // ---------- Meetings ----------
 

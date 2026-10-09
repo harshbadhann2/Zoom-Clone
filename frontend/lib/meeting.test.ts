@@ -1,7 +1,7 @@
 // Run with: npm test  (uses Node's built-in test runner, no extra packages)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatDayLabel, formatDuration, formatMeetingCode, initials, parseMeetingInput } from "./meeting.ts";
+import { formatDayLabel, formatDuration, formatMeetingCode, initials, parseMeetingInput, screenShareErrorMessage } from "./meeting.ts";
 
 test("parseMeetingInput accepts IDs with spaces or dashes", () => {
   assert.equal(parseMeetingInput("6148385880"), "6148385880");
@@ -36,4 +36,11 @@ test("formatDayLabel uses relative words for nearby days", () => {
   assert.equal(formatDayLabel(new Date(2026, 9, 8, 23, 30), now), "Today");
   assert.equal(formatDayLabel(new Date(2026, 9, 9, 0, 30), now), "Tomorrow");
   assert.equal(formatDayLabel(new Date(2026, 9, 7, 9, 0), now), "Yesterday");
+});
+
+test("screenShareErrorMessage explains each getDisplayMedia failure", () => {
+  assert.match(screenShareErrorMessage(new DOMException("Permission denied by system", "NotAllowedError")), /Screen Recording/);
+  assert.equal(screenShareErrorMessage(new DOMException("Permission denied", "NotAllowedError")), "Screen sharing was cancelled.");
+  assert.match(screenShareErrorMessage(new DOMException("Could not start video source", "NotReadableError")), /Couldn.t capture/);
+  assert.equal(screenShareErrorMessage("weird"), "Screen sharing failed. Please try again.");
 });

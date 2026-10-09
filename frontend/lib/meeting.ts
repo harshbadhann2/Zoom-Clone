@@ -73,3 +73,20 @@ export function buildInvitation(meeting: Meeting): string {
     `Meeting ID: ${formatMeetingCode(meeting.meeting_code)}`,
   ].join("\n");
 }
+
+// ---------- Screen sharing ----------
+
+/** A readable message for why navigator.mediaDevices.getDisplayMedia() failed. */
+export function screenShareErrorMessage(error: unknown): string {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : "";
+  if (name === "NotAllowedError" && /system/i.test(message)) {
+    // e.g. macOS hasn't given the browser "Screen Recording" permission yet.
+    return "Your computer is blocking screen recording for this browser. Allow it in your system privacy settings (Mac: System Settings → Privacy & Security → Screen Recording), then try again.";
+  }
+  if (name === "NotAllowedError") return "Screen sharing was cancelled.";
+  if (name === "NotFoundError" || name === "NotReadableError" || name === "AbortError") {
+    return "Couldn’t capture your screen. Close other apps that are recording it and try again.";
+  }
+  return "Screen sharing failed. Please try again.";
+}
