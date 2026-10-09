@@ -56,7 +56,7 @@ SQLite (meetings, participants)
 
 **Real-time updates without WebSockets:** the meeting room fetches `GET /api/meetings/{id}` every 3 seconds. That one response carries the participants and the chat, so it is how a guest sees new messages, notices they were muted by "Mute all" or removed, or learns the meeting ended.
 
-**Audio and video (WebRTC, `frontend/lib/useMeetingMedia.ts`):** every pair of participants gets one `RTCPeerConnection`, and the media flows directly between the two browsers. To connect, the newer participant sends an SDP **offer** and the other replies with an **answer**; the API only relays these two messages (`/signals`, polled every second, each delivered once and then deleted). Each connection has one audio and one video slot, so turning the mic, camera or screen share on or off just swaps the track in its slot without renegotiating. A public STUN server lets browsers find each other.
+**Audio and video (WebRTC, `frontend/lib/useMeetingMedia.ts`):** every pair of participants gets one `RTCPeerConnection`, and the media flows directly between the two browsers. To connect, the newer participant sends an SDP **offer** and the other replies with an **answer**; the API only relays these two messages (`/signals`, polled every second, each delivered once and then deleted). Each connection has one audio and one video slot, so turning the mic, camera or screen share on or off just swaps the track in its slot without renegotiating. The STUN/TURN servers come from the API (`GET /ice-servers`, members only), so TURN credentials stay on the server. Each remote tile shows "Connecting audio/video…" until the connection is up; if there is no route within 20 seconds it shows "Can't connect audio/video" with an explanation, and the newer participant retries every 15 seconds.
 
 **Authentication:** after signing in, the browser keeps a random token (in `localStorage`) and sends it as `Authorization: Bearer <token>`. FastAPI's `get_current_user` dependency looks the token up in the `sessions` table.
 
@@ -162,6 +162,7 @@ kind 'offer' | 'answer' (CHECK), sdp TEXT, created_at
 | `POST` 🔒 | `/api/meetings/{meeting_code}/start` | Join **as host**. Only the signed-in owner (401 signed out, 403 anyone else). Moves the host role here if another session had it. |
 | `POST` 🎟️ | `/api/meetings/{meeting_code}/signals` | `{to, kind: "offer" \| "answer", sdp}`: relay a WebRTC message to another participant in the meeting |
 | `GET` 🎟️ | `/api/meetings/{meeting_code}/signals` | WebRTC messages addressed to you (each returned once, then deleted) |
+| `GET` 🎟️ | `/api/meetings/{meeting_code}/ice-servers` | STUN/TURN servers for your connections, plus `relay: true/false` (whether a TURN relay is configured) |
 | `POST` 🎟️ | `/api/meetings/{meeting_code}/messages` | `{text}`: send a chat message as yourself |
 | `PATCH` 🎟️ | `/api/meetings/{meeting_code}/participants/me` | `{is_muted}`: mute or unmute yourself |
 | `POST` 🎟️ | `/api/meetings/{meeting_code}/participants/me/leave` | Leave the meeting |
@@ -211,8 +212,9 @@ cd frontend && npm run lint && npm run build
 |---|---|---|---|
 | backend | `DATABASE_URL` | `sqlite:///./zoom_clone.db` | SQLite file location |
 | backend | `FRONTEND_URL` | `http://localhost:3000` | Used to build invite links and as the only allowed CORS origin |
+| backend | `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN` | *(unset)* | Optional TURN relay via Cloudflare Realtime (free tier: 1,000 GB/month). The server generates short-lived credentials per participant. |
+| backend | `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | *(unset)* | Optional alternative: any TURN server with fixed credentials (comma-separated URLs). |
 | frontend | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Base URL of the FastAPI backend |
-| frontend | `NEXT_PUBLIC_ICE_SERVERS` | *(unset → Google's public STUN server)* | Optional JSON list of STUN/TURN servers for WebRTC, e.g. `[{"urls":"turn:turn.example.com:3478","username":"…","credential":"…"}]`. Needed for networks that block direct connections (see Known limitations). Don't commit real TURN credentials. |
 
 The backend reads real environment variables, and the defaults work for local development. No secrets are needed or committed.
 
@@ -241,11 +243,17 @@ To deploy the backend: Render dashboard → **New → Blueprint** → select thi
 
 **For real persistence**, move the backend to a paid Render instance with a disk mounted at `/var/data` and set `DATABASE_URL=sqlite:////var/data/zoom_clone.db`. No code changes are needed.
 
+## Enabling TURN (audio/video on any network)
+
+1. Create a free Cloudflare account → **Realtime** → **TURN Server** → *Create* → copy the **Turn Token ID** and **API Token**.
+2. In Render → `zoom-clone-api` → **Environment**, add `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` (keep them secret; never commit them), then save so Render redeploys.
+3. Check: `GET /api/meetings/{id}/ice-servers` (from inside a meeting) now returns `"relay": true`.
+
 ## Known limitations
 
 1. **Cold starts.** The backend runs on Render's free plan, which stops it after 15 minutes without requests. The next request waits for it to start again (measured ≈ 32–43 s; warm requests ≈ 0.4–0.8 s). The dashboard shows "Waking up the server…" meanwhile, and requests time out after 75 s with a Retry button.
 2. **Data is not guaranteed to persist.** SQLite lives on the free plan's temporary disk (`DATABASE_URL=sqlite:///./zoom_clone.db`). Every restart, redeploy or sleep resets it to the seeded sample data (verified: a meeting returned 404 after a redeploy). The demo account always works; accounts and meetings you create can disappear. Keeping the service awake does **not** make the data durable; only a persistent disk would.
-3. **Audio/video connect directly between browsers, using a STUN server only.** That works on most home and mobile networks. Strict corporate or university firewalls and some mobile carriers (symmetric NAT) need a **TURN relay**, which isn't configured because there's no free, credential-free one. Set `NEXT_PUBLIC_ICE_SERVERS` to add one. When two people can't connect directly they still see each other's names, chat and mute state, but not audio/video.
+3. **Audio/video across different networks need a TURN relay, and none is configured by default.** Without one, browsers can only connect directly (STUN). That works on most home Wi-Fi but often **fails on mobile data (carrier NAT) and strict corporate/university networks**; the tiles then say "Can't connect audio/video" and explain why, while chat, the participant list and mute state keep working. Relaying was verified with a local TURN server: both browsers were forced to relay-only routes, connected through the relay, and heard each other. To enable it in production, set the Cloudflare (or `TURN_*`) variables on the backend; see [Enabling TURN](#enabling-turn-audiovideo-on-any-network).
 4. **Small meetings only.** Each participant sends a copy of their audio/video to every other participant (a "mesh"). That's fine for 2–4 people; larger meetings would need a media server (SFU).
 5. **Basic media features.** There's no audio-device picker, echo test, recording, or "who is speaking" detection. A participant who changes their own browser code could ignore Mute All (the server can't force a browser's microphone off). Closing a tab without clicking Leave keeps that person listed until the meeting ends.
 

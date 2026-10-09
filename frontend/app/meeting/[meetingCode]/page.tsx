@@ -242,6 +242,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
   }
 
   const participants = meeting.active_participants;
+  const failedNames = participants.filter((p) => media.status[p.id] === "failed").map((p) => p.display_name);
   const gridColumns =
     participants.length === 1 ? "max-w-4xl grid-cols-1" : participants.length <= 4 ? "max-w-6xl grid-cols-1 sm:grid-cols-2" : "max-w-7xl grid-cols-2 lg:grid-cols-3";
 
@@ -253,6 +254,7 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
       isMuted={person.is_muted}
       stream={person.id === me.id ? cameraStream : media.remote[person.id]?.videoOn ? media.remote[person.id].stream : null}
       mirrored={person.id === me.id}
+      connection={person.id === me.id ? undefined : media.status[person.id]}
       compact={Boolean(screenStream)}
     />
   ));
@@ -299,6 +301,15 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
           </div>
         )}
       </header>
+
+      {failedNames.length > 0 && (
+        <p role="status" className="shrink-0 bg-[#5c1f1f] px-4 py-2 text-center text-sm">
+          Audio/video couldn’t connect with {failedNames.join(", ")}.{" "}
+          {media.relayAvailable
+            ? "Retrying…"
+            : "A network is blocking direct connections (common on mobile data or strict Wi‑Fi), and no relay (TURN) server is set up for this demo. Chat and the participant list still work."}
+        </p>
+      )}
 
       {screenStream && (
         <div className="flex shrink-0 items-center justify-center gap-3 bg-[#0e8a3a] py-1.5 text-sm font-medium">

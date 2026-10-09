@@ -7,6 +7,7 @@ import type {
   MeetingDetail,
   Message,
   Participant,
+  IceConfig,
   ScheduleMeetingInput,
   Signal,
   User,
@@ -112,6 +113,9 @@ export const sendMessage = (code: string, myId: number, text: string) =>
 
 export const sendSignal = (code: string, myId: number, to: number, kind: "offer" | "answer", sdp: string) =>
   post<void>(`/api/meetings/${code}/signals`, { to, kind, sdp }, asParticipant(myId));
+
+export const getIceServers = (code: string, myId: number) =>
+  request<IceConfig>(`/api/meetings/${code}/ice-servers`, { headers: asParticipant(myId) });
 
 export const takeSignals = (code: string, myId: number) =>
   request<Signal[]>(`/api/meetings/${code}/signals`, { headers: asParticipant(myId) });

@@ -30,6 +30,11 @@ export interface JoinResponse extends Participant {
   token: string; // secret: only the person who joined receives it
 }
 
+export interface IceConfig {
+  ice_servers: RTCIceServer[];
+  relay: boolean; // false = no TURN relay configured on the server
+}
+
 export interface Signal {
   id: number;
   sender_id: number;

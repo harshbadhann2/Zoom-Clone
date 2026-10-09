@@ -6,17 +6,22 @@
 // - Every pair of participants gets one RTCPeerConnection (a "mesh"; fine for small meetings).
 // - The newer participant (higher id) sends an "offer" to each older one; the older one replies
 //   with an "answer". These two messages are relayed by our API (/signals), polled every second.
+// - The STUN/TURN servers come from our API (/ice-servers), so TURN credentials never live in the code.
 // - Each connection is created with one audio and one video "slot" (transceiver). Turning the mic,
 //   camera or screen share on/off just swaps the track in that slot, so no renegotiation is needed.
-// - Media flows directly between browsers. A public STUN server helps them find each other; some
-//   networks also need a TURN relay (set NEXT_PUBLIC_ICE_SERVERS, see README).
+// - Media flows directly between browsers. STUN helps them find each other; when a direct route is
+//   impossible (often on mobile data) only a TURN relay works, if the server has one configured.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { sendSignal, takeSignals } from "@/lib/api";
+import { getIceServers, sendSignal, takeSignals } from "@/lib/api";
 
 const SIGNAL_POLL_MS = 1000;
 const ICE_GATHERING_TIMEOUT_MS = 2500;
-const ICE_SERVERS: RTCIceServer[] = readIceServers() ?? [{ urls: "stun:stun.l.google.com:19302" }];
+const RETRY_AFTER_FAILURE_MS = 15_000;
+// If there is no route at all, browsers can stay "connecting" forever instead of reporting "failed".
+const CONNECT_TIMEOUT_MS = 20_000;
+
+export type PeerStatus = "connecting" | "connected" | "failed";
 
 export interface RemoteMedia {
   stream: MediaStream; // the other person's audio + video tracks
@@ -36,6 +41,8 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
   const micTrack = useRef<MediaStreamTrack | null>(null); // our microphone, once permission is given
   const [hasMicrophone, setHasMicrophone] = useState(false);
   const [remote, setRemote] = useState<Record<number, RemoteMedia>>({});
+  const [status, setStatus] = useState<Record<number, PeerStatus>>({});
+  const [relayAvailable, setRelayAvailable] = useState(true); // until the server tells us otherwise
 
   const peers = useRef(new Map<number, RTCPeerConnection>());
   // Latest values for the polling loop, which outlives individual renders.
@@ -80,12 +87,23 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
   useEffect(() => {
     if (!active) return;
     const connections = peers.current;
+    const failedAt = new Map<number, number>(); // when a connection last failed, to retry slowly
+    let iceServers: RTCIceServer[] | null = null;
     let stopped = false;
     let busy = false;
 
-    const closePeer = (id: number) => {
+    const setPeerStatus = (id: number, value: PeerStatus | null) =>
+      setStatus((current) => {
+        const next = { ...current };
+        if (value) next[id] = value;
+        else delete next[id];
+        return next;
+      });
+
+    const closePeer = (id: number, keepStatus = false) => {
       connections.get(id)?.close();
       connections.delete(id);
+      if (!keepStatus) setPeerStatus(id, null);
       setRemote((current) => {
         const next = { ...current };
         delete next[id];
@@ -94,7 +112,8 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
     };
 
     const createPeer = (id: number) => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: iceServers ?? [] });
+      setPeerStatus(id, "connecting");
       const stream = new MediaStream();
       const publish = () => {
         const video = stream.getVideoTracks()[0];
@@ -106,9 +125,22 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
         track.onunmute = publish; // video frames started arriving
         publish();
       };
+      const markFailed = () => {
+        if (connections.get(id) !== pc) return; // an older, replaced connection
+        // No route between the two browsers. Show it, and let the newer participant try again later.
+        failedAt.set(id, Date.now());
+        setPeerStatus(id, "failed");
+        closePeer(id, true);
+      };
+      const timeout = setTimeout(() => pc.connectionState !== "connected" && markFailed(), CONNECT_TIMEOUT_MS);
       pc.onconnectionstatechange = () => {
-        // A failed connection is dropped; the newer participant will offer again on the next tick.
-        if (pc.connectionState === "failed" && connections.get(id) === pc) closePeer(id);
+        if (connections.get(id) !== pc) return;
+        if (pc.connectionState === "connected") {
+          clearTimeout(timeout);
+          setPeerStatus(id, "connected");
+        }
+        if (pc.connectionState === "failed") markFailed();
+        if (pc.connectionState === "closed") clearTimeout(timeout);
       };
       connections.set(id, pc);
       return pc;
@@ -139,9 +171,17 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
       if (busy || stopped) return;
       busy = true;
       try {
+        if (!iceServers) {
+          const config = await getIceServers(meetingCode, myId);
+          iceServers = config.ice_servers;
+          setRelayAvailable(config.relay);
+        }
         const wanted = new Set(latest.current.peerIds);
         for (const id of connections.keys()) if (!wanted.has(id)) closePeer(id); // they left
-        for (const id of wanted) if (id < myId && !connections.has(id)) await callPeer(id); // I'm newer: I call them
+        for (const id of wanted) {
+          const recentlyFailed = Date.now() - (failedAt.get(id) ?? 0) < RETRY_AFTER_FAILURE_MS;
+          if (id < myId && !connections.has(id) && !recentlyFailed) await callPeer(id); // I'm newer: I call them
+        }
 
         for (const signal of await takeSignals(meetingCode, myId)) {
           if (signal.kind === "offer") await answerPeer(signal.sender_id, signal.sdp);
@@ -166,12 +206,13 @@ export function useMeetingMedia({ meetingCode, myId, peerIds, active, muted, out
       for (const pc of connections.values()) pc.close();
       connections.clear();
       setRemote({});
+      setStatus({});
       micTrack.current?.stop();
       micTrack.current = null;
     };
   }, [active, meetingCode, myId]);
 
-  return { remote, hasMicrophone, requestMicrophone };
+  return { remote, status, relayAvailable, hasMicrophone, requestMicrophone };
 }
 
 function setOutgoingTracks(pc: RTCPeerConnection, audio: MediaStreamTrack | null, video: MediaStreamTrack | null) {
@@ -194,14 +235,4 @@ function iceGatheringDone(pc: RTCPeerConnection): Promise<void> {
       }
     });
   });
-}
-
-/** Optional STUN/TURN servers from NEXT_PUBLIC_ICE_SERVERS, e.g. [{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]. */
-function readIceServers(): RTCIceServer[] | null {
-  try {
-    const value = process.env.NEXT_PUBLIC_ICE_SERVERS;
-    return value ? (JSON.parse(value) as RTCIceServer[]) : null;
-  } catch {
-    return null;
-  }
 }
