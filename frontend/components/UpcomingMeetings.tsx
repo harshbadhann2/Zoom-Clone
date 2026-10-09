@@ -128,7 +128,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
 
 export function LoadingRows({ count = 3 }: { count?: number }) {
   return (
-    <div aria-label="Loading meetings" className="space-y-2 p-3">
+    <div role="status" aria-label="Loading meetings" className="space-y-2 p-3">
       {Array.from({ length: count }, (_, i) => (
         <div key={i} className="animate-pulse space-y-2 py-2">
           <div className="h-3 w-32 rounded bg-line" />
