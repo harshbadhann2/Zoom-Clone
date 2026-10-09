@@ -263,3 +263,26 @@ def test_seed_creates_demo_user_with_upcoming_and_recent(client, db_session_fact
     recent = client.get("/api/meetings/recent", headers=headers).json()
     assert len(recent) == 4
     assert all(m["participant_count"] >= 2 for m in recent)
+
+
+def test_renaming_the_host_updates_their_meetings(client, auth_headers):
+    code = create_instant(client, auth_headers)["meeting_code"]
+    client.patch("/api/auth/me", json={"name": "Harsh B."}, headers=auth_headers)
+    assert client.get(f"/api/meetings/{code}").json()["host_name"] == "Harsh B."  # host name comes from users.name
+
+
+def test_meeting_lists_do_not_query_once_per_meeting(client, auth_headers, db_session_factory):
+    """The dashboard lists load participant counts in one extra query, not one per meeting."""
+    from sqlalchemy import event
+
+    for _ in range(6):
+        schedule(client, auth_headers)
+    engine = db_session_factory.kw["bind"]
+    statements = []
+    listener = lambda *args: statements.append(args[2])  # noqa: E731
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        assert len(client.get("/api/meetings/upcoming", headers=auth_headers).json()) == 6
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert len(statements) <= 4, statements  # session lookup + user + meetings + participants

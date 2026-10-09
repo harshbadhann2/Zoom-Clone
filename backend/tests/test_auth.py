@@ -57,3 +57,30 @@ def test_logout_invalidates_the_token(client):
 def test_protected_routes_need_a_valid_token(client):
     assert client.get("/api/meetings/upcoming").status_code == 401
     assert client.get("/api/meetings/upcoming", headers=bearer("made-up-token")).status_code == 401
+
+
+def test_update_own_profile_name(client):
+    token = client.post("/api/auth/signup", json=USER).json()["token"]
+
+    response = client.patch("/api/auth/me", json={"name": "  Priya S.  "}, headers=bearer(token))
+    assert response.status_code == 200
+    assert response.json()["name"] == "Priya S."
+    assert response.json()["email"] == "priya@example.com"  # email can't be changed here
+    assert client.get("/api/auth/me", headers=bearer(token)).json()["name"] == "Priya S."  # persisted
+
+
+def test_profile_update_validation_and_auth(client):
+    token = client.post("/api/auth/signup", json=USER).json()["token"]
+
+    assert client.patch("/api/auth/me", json={"name": "   "}, headers=bearer(token)).status_code == 422
+    assert client.patch("/api/auth/me", json={"name": "x" * 101}, headers=bearer(token)).status_code == 422
+    assert client.patch("/api/auth/me", json={"name": "Hacker"}).status_code == 401
+
+
+def test_profile_update_only_changes_your_own_account(client):
+    priya = client.post("/api/auth/signup", json=USER).json()["token"]
+    alex = client.post("/api/auth/signup", json={"name": "Alex", "email": "alex@example.com", "password": "secret123"}).json()["token"]
+
+    client.patch("/api/auth/me", json={"name": "Renamed"}, headers=bearer(alex))
+    assert client.get("/api/auth/me", headers=bearer(priya)).json()["name"] == "Priya Sharma"
+    assert client.get("/api/auth/me", headers=bearer(alex)).json()["name"] == "Renamed"

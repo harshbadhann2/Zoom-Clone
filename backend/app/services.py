@@ -4,7 +4,7 @@ import secrets
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import Meeting, Message, Participant, User, utc_now
 from app.schemas import MeetingCreate
@@ -60,6 +60,7 @@ def list_upcoming(db: Session, user: User) -> list[Meeting]:
         select(Meeting)
         .where(Meeting.host_user_id == user.id, Meeting.status != "ended")
         .order_by(Meeting.scheduled_at)
+        .options(selectinload(Meeting.participants))  # one query for all participant counts, not one per meeting
     )
     # ponytail: time filter runs in Python (fine for hundreds of rows); store an ends_at column to filter in SQL.
     return [m for m in meetings if is_upcoming(m)]
@@ -68,7 +69,10 @@ def list_upcoming(db: Session, user: User) -> list[Meeting]:
 def list_recent(db: Session, user: User) -> list[Meeting]:
     """Recent = ended by the host, or its scheduled time slot is over."""
     meetings = db.scalars(
-        select(Meeting).where(Meeting.host_user_id == user.id).order_by(Meeting.scheduled_at.desc())
+        select(Meeting)
+        .where(Meeting.host_user_id == user.id)
+        .order_by(Meeting.scheduled_at.desc())
+        .options(selectinload(Meeting.participants))  # one query for all participant counts, not one per meeting
     )
     return [m for m in meetings if not is_upcoming(m)][:RECENT_MEETINGS_LIMIT]
 

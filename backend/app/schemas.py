@@ -41,6 +41,14 @@ class SignupRequest(LoginRequest):
     password: str = Field(min_length=8, max_length=128)
 
 
+class ProfileUpdate(BaseModel):
+    """Fields a user may change about themselves (email is the login, so it stays fixed)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

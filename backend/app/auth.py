@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import AuthSession, User
-from app.schemas import AuthResponse, LoginRequest, SignupRequest, UserOut
+from app.schemas import AuthResponse, LoginRequest, ProfileUpdate, SignupRequest, UserOut
 
 HASH_ITERATIONS = 200_000
 
@@ -86,6 +86,14 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
+    return user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_profile(data: ProfileUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Change your own display name. Only the signed-in user's row can be changed."""
+    user.name = data.name
+    db.commit()
     return user
 
 
