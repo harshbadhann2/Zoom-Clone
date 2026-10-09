@@ -9,6 +9,7 @@ participants 1 ──< messages (who sent each message)
 All datetimes are stored as UTC without timezone info (SQLite has no timezone type).
 """
 
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import CheckConstraint, ForeignKey, String, Text
@@ -103,6 +104,9 @@ class Participant(Base):
     is_muted: Mapped[bool] = mapped_column(default=True)
     joined_at: Mapped[datetime] = mapped_column(default=utc_now)
     left_at: Mapped[datetime | None]  # NULL while the person is still in the meeting
+    # Secret given only to this participant when they join. Every action they take must include it,
+    # so knowing a meeting ID or participant ID is not enough to act as someone else.
+    token: Mapped[str] = mapped_column(String(64), unique=True, default=lambda: secrets.token_urlsafe(24))
 
     meeting: Mapped[Meeting] = relationship(back_populates="participants")
 

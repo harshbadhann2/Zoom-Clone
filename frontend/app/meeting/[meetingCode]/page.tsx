@@ -19,6 +19,7 @@ import {
   sendMessage,
   setMuted,
 } from "@/lib/api";
+import { getParticipantToken } from "@/lib/auth";
 import { formatMeetingCode } from "@/lib/meeting";
 import type { MeetingDetail, Participant } from "@/types/meeting";
 
@@ -99,7 +100,9 @@ export default function MeetingRoomPage({ params, searchParams }: MeetingRoomPro
     return <RoomMessage title="Connecting…" spinner />;
   }
 
-  const me = meeting.active_participants.find((p) => p.id === myId);
+  // We are only "in" the meeting if the server lists us AND this tab holds our participant token
+  // (a copied room URL opened elsewhere has no token, so it must join properly).
+  const me = getParticipantToken(myId) ? meeting.active_participants.find((p) => p.id === myId) : undefined;
 
   if (meeting.status === "ended") {
     return <RoomMessage title="This meeting has been ended by the host" text={meeting.title} />;

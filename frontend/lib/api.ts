@@ -2,6 +2,7 @@
 
 import type {
   AuthResponse,
+  JoinResponse,
   Meeting,
   MeetingDetail,
   Message,
@@ -9,7 +10,7 @@ import type {
   ScheduleMeetingInput,
   User,
 } from "@/types/meeting";
-import { getToken } from "@/lib/auth";
+import { getParticipantToken, getToken, saveParticipantToken } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -20,7 +21,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
   if (options.body) headers["Content-Type"] = "application/json";
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`; // tells the server who is signed in
@@ -42,8 +43,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.status === 204 ? (undefined as T) : response.json();
 }
 
-const post = <T>(path: string, body: object = {}) =>
-  request<T>(path, { method: "POST", body: JSON.stringify(body) });
+const post = <T>(path: string, body: object = {}, headers: Record<string, string> = {}) =>
+  request<T>(path, { method: "POST", body: JSON.stringify(body), headers });
+
+/** Header proving which participant is acting (see saveParticipantToken in lib/auth.ts). */
+const asParticipant = (participantId: number) => ({ "X-Participant-Token": getParticipantToken(participantId) ?? "" });
 
 // ---------- Auth ----------
 
@@ -68,28 +72,30 @@ export const scheduleMeeting = (input: ScheduleMeetingInput) =>
 // ---------- Participants ----------
 
 /** If the signed-in host joins their own meeting, the server makes them host. */
-export const joinMeeting = (code: string, displayName: string, isMuted = true) =>
-  post<Participant>(`/api/meetings/${code}/join`, { display_name: displayName, is_muted: isMuted });
+export async function joinMeeting(code: string, displayName: string, isMuted = true): Promise<JoinResponse> {
+  const participant = await post<JoinResponse>(`/api/meetings/${code}/join`, { display_name: displayName, is_muted: isMuted });
+  saveParticipantToken(participant.id, participant.token);
+  return participant;
+}
 
-export const setMuted = (code: string, participantId: number, isMuted: boolean) =>
-  request<Participant>(`/api/meetings/${code}/participants/${participantId}`, {
+export const setMuted = (code: string, myId: number, isMuted: boolean) =>
+  request<Participant>(`/api/meetings/${code}/participants/me`, {
     method: "PATCH",
     body: JSON.stringify({ is_muted: isMuted }),
+    headers: asParticipant(myId),
   });
 
-export const leaveMeeting = (code: string, participantId: number) =>
-  post<void>(`/api/meetings/${code}/participants/${participantId}/leave`);
+export const leaveMeeting = (code: string, myId: number) =>
+  post<void>(`/api/meetings/${code}/participants/me/leave`, {}, asParticipant(myId));
 
-export const sendMessage = (code: string, participantId: number, text: string) =>
-  post<Message>(`/api/meetings/${code}/messages`, { participant_id: participantId, text });
+export const sendMessage = (code: string, myId: number, text: string) =>
+  post<Message>(`/api/meetings/${code}/messages`, { text }, asParticipant(myId));
 
-// ---------- Host controls ----------
+// ---------- Host controls (the server checks that myId's token belongs to the host) ----------
 
-export const endMeeting = (code: string, hostId: number) =>
-  post<void>(`/api/meetings/${code}/end`, { host_participant_id: hostId });
+export const endMeeting = (code: string, myId: number) => post<void>(`/api/meetings/${code}/end`, {}, asParticipant(myId));
 
-export const muteAll = (code: string, hostId: number) =>
-  post<void>(`/api/meetings/${code}/mute-all`, { host_participant_id: hostId });
+export const muteAll = (code: string, myId: number) => post<void>(`/api/meetings/${code}/mute-all`, {}, asParticipant(myId));
 
-export const removeParticipant = (code: string, participantId: number, hostId: number) =>
-  post<void>(`/api/meetings/${code}/participants/${participantId}/remove`, { host_participant_id: hostId });
+export const removeParticipant = (code: string, participantId: number, myId: number) =>
+  post<void>(`/api/meetings/${code}/participants/${participantId}/remove`, {}, asParticipant(myId));

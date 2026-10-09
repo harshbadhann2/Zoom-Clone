@@ -26,3 +26,25 @@ export function clearToken() {
     // ignore
   }
 }
+
+// ---------- Meeting participant tokens ----------
+// Joining a meeting returns a secret token that proves "I am this participant".
+// It lives in sessionStorage: it survives a refresh, but each browser tab is its own participant.
+
+const participantKey = (participantId: number) => `zoom-clone-participant-${participantId}`;
+
+export function saveParticipantToken(participantId: number, token: string) {
+  try {
+    sessionStorage.setItem(participantKey(participantId), token);
+  } catch {
+    // ignore
+  }
+}
+
+export function getParticipantToken(participantId: number): string | null {
+  try {
+    return sessionStorage.getItem(participantKey(participantId));
+  } catch {
+    return null;
+  }
+}

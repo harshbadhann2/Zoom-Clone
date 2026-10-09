@@ -26,6 +26,10 @@ export interface Meeting {
   invite_link: string;
 }
 
+export interface JoinResponse extends Participant {
+  token: string; // secret: only the person who joined receives it
+}
+
 export interface Message {
   id: number;
   participant_id: number;

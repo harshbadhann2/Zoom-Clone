@@ -93,16 +93,11 @@ class ParticipantUpdate(BaseModel):
     is_muted: bool
 
 
-class HostAction(BaseModel):
-    """Body for host-only actions. The server checks this participant really is the host."""
-
-    host_participant_id: int
-
-
 class MessageCreate(BaseModel):
+    """The sender is identified by their participant token, not by anything in the body."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    participant_id: int
     text: str = Field(min_length=1, max_length=1000)
 
 
@@ -117,6 +112,12 @@ class ParticipantOut(BaseModel):
     is_muted: bool
     joined_at: UTCDateTime
     left_at: UTCDateTime | None
+
+
+class JoinResponse(ParticipantOut):
+    """Returned only to the person who joined: includes their secret participant token."""
+
+    token: str
 
 
 class MessageOut(BaseModel):

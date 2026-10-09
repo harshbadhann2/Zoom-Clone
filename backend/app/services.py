@@ -87,11 +87,19 @@ def get_participant_or_404(meeting: Meeting, participant_id: int) -> Participant
     raise HTTPException(status_code=404, detail="Participant not found in this meeting.")
 
 
-def require_host(meeting: Meeting, host_participant_id: int) -> Participant:
-    host = get_participant_or_404(meeting, host_participant_id)
-    if not host.is_host or host.left_at is not None:
+def get_participant_by_token(db: Session, meeting_code: str, token: str | None) -> Participant:
+    """Identify who is making a request from the secret token they got when joining."""
+    participant = db.scalar(select(Participant).where(Participant.token == token)) if token else None
+    if participant is None or participant.meeting.meeting_code != meeting_code:
+        raise HTTPException(status_code=401, detail="You're not in this meeting. Please join again.")
+    if participant.left_at is not None:
+        raise HTTPException(status_code=403, detail="You're no longer in this meeting.")
+    return participant
+
+
+def require_host(participant: Participant) -> None:
+    if not participant.is_host:
         raise HTTPException(status_code=403, detail="Only the host can do this.")
-    return host
 
 
 def join_meeting(db: Session, meeting: Meeting, display_name: str, user: User | None, is_muted: bool) -> Participant:
@@ -130,11 +138,8 @@ def mute_all(db: Session, meeting: Meeting) -> None:
     db.commit()
 
 
-def send_message(db: Session, meeting: Meeting, participant_id: int, text: str) -> Message:
-    sender = get_participant_or_404(meeting, participant_id)
-    if sender.left_at is not None or meeting.status == "ended":
-        raise HTTPException(status_code=409, detail="You're no longer in this meeting.")
-    message = Message(meeting=meeting, sender=sender, text=text)
+def send_message(db: Session, sender: Participant, text: str) -> Message:
+    message = Message(meeting=sender.meeting, sender=sender, text=text)
     db.add(message)
     db.commit()
     db.refresh(message)

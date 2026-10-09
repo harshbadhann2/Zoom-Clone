@@ -31,6 +31,11 @@ def join(client, code, name="Guest", headers=None, **extra):
     return client.post(f"/api/meetings/{code}/join", json={"display_name": name, **extra}, headers=headers)
 
 
+def as_participant(participant: dict) -> dict:
+    """The header that proves who a participant is (returned only to them when they joined)."""
+    return {"X-Participant-Token": participant["token"]}
+
+
 # ---------- Creation ----------
 
 def test_instant_meeting_gets_id_link_and_is_live(client, auth_headers):
@@ -120,10 +125,12 @@ def test_guest_can_join_without_an_account(client, auth_headers):
     assert response.json()["display_name"] == "Priya"
     assert response.json()["is_host"] is False
     assert response.json()["is_muted"] is True  # muted by default
+    assert len(response.json()["token"]) >= 30  # secret for this participant only
 
     meeting = client.get(f"/api/meetings/{code}").json()
     assert meeting["status"] == "live"  # first join starts a scheduled meeting
     assert [p["display_name"] for p in meeting["active_participants"]] == ["Priya"]
+    assert "token" not in meeting["active_participants"][0]  # never exposed to others
 
 
 def test_join_with_microphone_on(client, auth_headers):
@@ -147,7 +154,7 @@ def test_leave_meeting_removes_from_active_list(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
     participant = join(client, code).json()
 
-    assert client.post(f"/api/meetings/{code}/participants/{participant['id']}/leave").status_code == 204
+    assert client.post(f"/api/meetings/{code}/participants/me/leave", headers=as_participant(participant)).status_code == 204
     assert client.get(f"/api/meetings/{code}").json()["active_participants"] == []
 
 
@@ -157,7 +164,7 @@ def test_chat_messages_are_shared_with_the_meeting(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
     alex = join(client, code, "Alex").json()
 
-    response = client.post(f"/api/meetings/{code}/messages", json={"participant_id": alex["id"], "text": " Hello! "})
+    response = client.post(f"/api/meetings/{code}/messages", json={"text": " Hello! "}, headers=as_participant(alex))
     assert response.status_code == 201
 
     messages = client.get(f"/api/meetings/{code}").json()["messages"]
@@ -169,9 +176,9 @@ def test_chat_rejects_empty_messages_and_people_who_left(client, auth_headers):
     alex = join(client, code, "Alex").json()
     url = f"/api/meetings/{code}/messages"
 
-    assert client.post(url, json={"participant_id": alex["id"], "text": "   "}).status_code == 422
-    client.post(f"/api/meetings/{code}/participants/{alex['id']}/leave")
-    assert client.post(url, json={"participant_id": alex["id"], "text": "hi"}).status_code == 409
+    assert client.post(url, json={"text": "   "}, headers=as_participant(alex)).status_code == 422
+    client.post(f"/api/meetings/{code}/participants/me/leave", headers=as_participant(alex))
+    assert client.post(url, json={"text": "hi"}, headers=as_participant(alex)).status_code == 403
 
 
 # ---------- Host controls ----------
@@ -180,14 +187,14 @@ def test_host_can_mute_all_and_remove(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
     host = join(client, code, HOST, headers=auth_headers).json()
     guest = join(client, code, "Alex").json()
-    client.patch(f"/api/meetings/{code}/participants/{guest['id']}", json={"is_muted": False})
+    client.patch(f"/api/meetings/{code}/participants/me", json={"is_muted": False}, headers=as_participant(guest))
 
-    assert client.post(f"/api/meetings/{code}/mute-all", json={"host_participant_id": host["id"]}).status_code == 204
+    assert client.post(f"/api/meetings/{code}/mute-all", headers=as_participant(host)).status_code == 204
     people = client.get(f"/api/meetings/{code}").json()["active_participants"]
     assert all(p["is_muted"] for p in people if not p["is_host"])
 
     remove_url = f"/api/meetings/{code}/participants/{guest['id']}/remove"
-    assert client.post(remove_url, json={"host_participant_id": host["id"]}).status_code == 204
+    assert client.post(remove_url, headers=as_participant(host)).status_code == 204
     people = client.get(f"/api/meetings/{code}").json()["active_participants"]
     assert [p["id"] for p in people] == [host["id"]]
 
@@ -196,15 +203,37 @@ def test_guest_cannot_use_host_controls(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
     guest = join(client, code, "Alex").json()
 
-    response = client.post(f"/api/meetings/{code}/mute-all", json={"host_participant_id": guest["id"]})
-    assert response.status_code == 403
+    assert client.post(f"/api/meetings/{code}/mute-all", headers=as_participant(guest)).status_code == 403
+    assert client.post(f"/api/meetings/{code}/end", headers=as_participant(guest)).status_code == 403
+
+
+def test_outsider_cannot_act_with_public_ids(client, auth_headers):
+    """Regression test: participant IDs are public, so they must not be enough to act."""
+    code = create_instant(client, auth_headers)["meeting_code"]
+    host = join(client, code, HOST, headers=auth_headers).json()
+    guest = join(client, code, "Alex").json()
+    other_code = create_instant(client, auth_headers)["meeting_code"]
+    stranger = join(client, other_code, "Stranger").json()
+
+    # No token at all
+    assert client.post(f"/api/meetings/{code}/end").status_code == 401
+    assert client.post(f"/api/meetings/{code}/messages", json={"text": "spoof"}).status_code == 401
+    assert client.post(f"/api/meetings/{code}/participants/{guest['id']}/remove").status_code == 401
+    # A real token, but for a different meeting
+    assert client.post(f"/api/meetings/{code}/end", headers=as_participant(stranger)).status_code == 401
+    # A made-up token
+    assert client.post(f"/api/meetings/{code}/end", headers={"X-Participant-Token": "guess"}).status_code == 401
+
+    meeting = client.get(f"/api/meetings/{code}").json()
+    assert meeting["status"] == "live" and meeting["messages"] == []
+    assert {p["id"] for p in meeting["active_participants"]} == {host["id"], guest["id"]}
 
 
 def test_ended_meeting_moves_to_recent_and_cannot_be_joined(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
     host = join(client, code, HOST, headers=auth_headers).json()
 
-    assert client.post(f"/api/meetings/{code}/end", json={"host_participant_id": host["id"]}).status_code == 204
+    assert client.post(f"/api/meetings/{code}/end", headers=as_participant(host)).status_code == 204
 
     assert code in [m["meeting_code"] for m in client.get("/api/meetings/recent", headers=auth_headers).json()]
     assert code not in [m["meeting_code"] for m in client.get("/api/meetings/upcoming", headers=auth_headers).json()]
