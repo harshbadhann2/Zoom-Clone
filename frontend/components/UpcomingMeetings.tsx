@@ -77,13 +77,13 @@ function UpcomingRow({ meeting, startingCode, onStart, onCopyInvitation, onDelet
     <li className="group flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-canvas">
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 text-xs text-ink-muted">
-          {isLive && <span className="rounded bg-zoom-green/15 px-1.5 py-0.5 text-[11px] font-semibold text-[#0e8a3a]">Live</span>}
+          {isLive && <span className="rounded bg-zoom-green/15 px-1.5 py-0.5 text-[11px] font-semibold text-[#0a6b2c]">Live</span>}
           {formatDayLabel(new Date(meeting.scheduled_at))} · {meetingTimeRange(meeting)}
         </p>
         <button
           type="button"
           onClick={() => onStart(meeting.meeting_code)}
-          className="mt-0.5 block max-w-full truncate text-left text-sm font-semibold hover:text-zoom-blue"
+          className="mt-0.5 block max-w-full truncate py-0.5 text-left text-sm font-semibold hover:text-zoom-blue"
         >
           {meeting.title}
         </button>

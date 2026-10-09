@@ -144,7 +144,7 @@ export default function JoinPage({ params, searchParams }: JoinPageProps) {
               Host: {meeting.host_name} · ID {formatMeetingCode(meeting.meeting_code)}
             </p>
             {meeting.status === "live" && (
-              <p className="mt-1.5 font-medium text-[#0e8a3a]">In progress · {meeting.active_participants.length} in meeting</p>
+              <p className="mt-1.5 font-medium text-[#0a6b2c]">In progress · {meeting.active_participants.length} in meeting</p>
             )}
           </div>
 
@@ -190,7 +190,7 @@ function JoinShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-white">
       <div className="px-6 py-6 sm:px-10">
-        <Link href="/" className="inline-flex items-center gap-0.5 text-sm text-zoom-blue hover:underline">
+        <Link href="/" className="inline-flex items-center gap-0.5 py-1 text-sm text-zoom-blue hover:underline">
           <ChevronLeft size={16} /> Back
         </Link>
       </div>

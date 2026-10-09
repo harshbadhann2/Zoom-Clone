@@ -14,7 +14,7 @@
   --color-zoom-green: #23d959;
 
   --color-ink: #2a2b2d;
-  --color-ink-muted: #6e7680;
+  --color-ink-muted: #5f6770; /* Zoom's #6e7680, darkened to pass WCAG AA contrast (4.5:1) on light backgrounds */
   --color-line: #e5e7eb;
   --color-canvas: #f7f8fa;
 

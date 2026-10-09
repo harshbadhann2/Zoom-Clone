@@ -23,7 +23,7 @@ export function ControlBar(props: ControlBarProps) {
   const [showLeaveMenu, setShowLeaveMenu] = useState(false);
 
   return (
-    <footer className="relative grid h-[72px] shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-1 bg-room px-2 sm:px-4">
+    <footer className="relative grid h-[72px] shrink-0 grid-cols-[auto_1fr_auto] items-center gap-0.5 bg-room px-1.5 sm:grid-cols-[1fr_auto_1fr] sm:gap-1 sm:px-4">
       <div className="flex">
         <ControlButton label={props.isMuted ? "Unmute" : "Mute"} onClick={props.onToggleMute}>
           {props.isMuted ? <MicOff size={22} className="text-zoom-red" /> : <Mic size={22} />}
@@ -33,7 +33,7 @@ export function ControlBar(props: ControlBarProps) {
         </ControlButton>
       </div>
 
-      <div className="flex">
+      <div className="flex justify-self-center">
         <ControlButton label="Participants" onClick={props.onToggleParticipants}>
           <span className="relative">
             <Users size={22} />
@@ -64,7 +64,7 @@ export function ControlBar(props: ControlBarProps) {
           type="button"
           onClick={() => setShowLeaveMenu((open) => !open)}
           aria-expanded={showLeaveMenu}
-          className="rounded-lg bg-zoom-red px-4 py-2 text-sm font-semibold text-white hover:bg-[#c81f1f] sm:px-5"
+          className="rounded-lg bg-zoom-red px-3 py-2 text-sm font-semibold text-white hover:bg-[#c81f1f] sm:px-5"
         >
           {props.isHost ? "End" : "Leave"}
         </button>
@@ -104,7 +104,7 @@ function ControlButton({ label, onClick, children }: { label: string; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className="flex min-w-[56px] flex-col items-center gap-1 whitespace-nowrap rounded-lg px-1.5 py-1.5 text-white transition-colors hover:bg-room-hover sm:min-w-[76px]"
+      className="flex min-w-[48px] flex-col items-center gap-1 whitespace-nowrap rounded-lg px-1 py-1.5 sm:min-w-[76px] sm:px-2 text-white transition-colors hover:bg-room-hover sm:min-w-[76px]"
     >
       <span className="flex h-[26px] items-center">{children}</span>
       <span className="text-[10px] text-white/85 sm:text-[11px]">{label}</span>
