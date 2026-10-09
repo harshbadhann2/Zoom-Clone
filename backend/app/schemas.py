@@ -101,6 +101,23 @@ class ParticipantUpdate(BaseModel):
     is_muted: bool
 
 
+class SignalCreate(BaseModel):
+    """A WebRTC offer/answer for one other participant. The sender comes from the participant token."""
+
+    to: int
+    kind: Literal["offer", "answer"]
+    sdp: str = Field(min_length=1, max_length=20_000)
+
+
+class SignalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sender_id: int
+    kind: str
+    sdp: str
+
+
 class MessageCreate(BaseModel):
     """The sender is identified by their participant token, not by anything in the body."""
 

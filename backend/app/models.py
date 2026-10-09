@@ -5,6 +5,7 @@ users 1 ──< meetings        (the user who hosts the meeting)
 meetings 1 ──< participants (everyone who joined, including guests without an account)
 meetings 1 ──< messages     (in-meeting chat)
 participants 1 ──< messages (who sent each message)
+meetings 1 ──< signals      (WebRTC connection setup messages, deleted once delivered)
 
 All datetimes are stored as UTC without timezone info (SQLite has no timezone type).
 """
@@ -126,3 +127,22 @@ class Message(Base):
     @property
     def sender_name(self) -> str:
         return self.sender.display_name
+
+
+class Signal(Base):
+    """A WebRTC connection-setup message (an SDP offer or answer) from one participant to another.
+
+    The audio/video itself flows directly between browsers; the server only relays these small
+    messages so two browsers can find each other. Each row is deleted as soon as it is delivered.
+    """
+
+    __tablename__ = "signals"
+    __table_args__ = (CheckConstraint("kind IN ('offer', 'answer')", name="valid_signal_kind"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="CASCADE"))
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    sdp: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)

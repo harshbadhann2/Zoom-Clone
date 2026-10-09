@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app import services
-from app.auth import get_current_user, get_optional_user
+from app.auth import get_current_user
 from app.database import get_db
 from app.models import Participant, User
 from app.schemas import (
@@ -15,6 +15,8 @@ from app.schemas import (
     MeetingOut,
     MessageCreate,
     MessageOut,
+    SignalCreate,
+    SignalOut,
     ParticipantOut,
     ParticipantUpdate,
 )
@@ -64,15 +66,22 @@ def delete_meeting(meeting_code: str, db: Session = Depends(get_db), user: User 
 
 
 @router.post("/{meeting_code}/join", response_model=JoinResponse, status_code=201)
-def join_meeting(
-    meeting_code: str, data: JoinRequest, db: Session = Depends(get_db), user: User | None = Depends(get_optional_user)
-):
-    """Anyone can join (no account needed). If the signed-in owner joins, they become the host.
+def join_meeting(meeting_code: str, data: JoinRequest, db: Session = Depends(get_db)):
+    """Join as a guest (no account needed). Joining never makes you host, even if you are signed in.
 
     The response includes a secret token; the browser sends it back as X-Participant-Token.
     """
     meeting = services.get_meeting_or_404(db, meeting_code)
-    return services.join_meeting(db, meeting, data.display_name, user, data.is_muted)
+    return services.join_meeting(db, meeting, data.display_name, data.is_muted)
+
+
+@router.post("/{meeting_code}/start", response_model=JoinResponse, status_code=201)
+def start_meeting(
+    meeting_code: str, data: JoinRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Join as the host. Requires signing in as the meeting's owner (401 if signed out, 403 if someone else)."""
+    meeting = services.get_meeting_or_404(db, meeting_code)
+    return services.start_meeting(db, meeting, user, data.display_name, data.is_muted)
 
 
 # ---------- Actions by a participant (identified by their token) ----------
@@ -95,6 +104,19 @@ def leave_meeting(me: Participant = Depends(current_participant), db: Session = 
 def send_message(data: MessageCreate, me: Participant = Depends(current_participant), db: Session = Depends(get_db)):
     """In-meeting chat. Other participants receive it on their next poll of GET /{meeting_code}."""
     return services.send_message(db, me, data.text)
+
+
+@router.post("/{meeting_code}/signals", status_code=204)
+def send_signal(data: SignalCreate, me: Participant = Depends(current_participant), db: Session = Depends(get_db)):
+    """Relay a WebRTC offer/answer to another participant in the same meeting."""
+    services.send_signal(db, me, data.to, data.kind, data.sdp)
+    return Response(status_code=204)
+
+
+@router.get("/{meeting_code}/signals", response_model=list[SignalOut])
+def receive_signals(me: Participant = Depends(current_participant), db: Session = Depends(get_db)):
+    """Offers/answers addressed to me. Each is returned once, then deleted."""
+    return services.take_signals(db, me)
 
 
 # ---------- Host controls (the token must belong to the host) ----------

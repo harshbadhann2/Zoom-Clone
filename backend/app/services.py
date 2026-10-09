@@ -3,10 +3,10 @@
 import secrets
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Meeting, Message, Participant, User, utc_now
+from app.models import Meeting, Message, Participant, Signal, User, utc_now
 from app.schemas import MeetingCreate
 
 RECENT_MEETINGS_LIMIT = 10
@@ -106,13 +106,16 @@ def require_host(participant: Participant) -> None:
         raise HTTPException(status_code=403, detail="Only the host can do this.")
 
 
-def join_meeting(db: Session, meeting: Meeting, display_name: str, user: User | None, is_muted: bool) -> Participant:
+def join_meeting(db: Session, meeting: Meeting, display_name: str, is_muted: bool, as_host: bool = False) -> Participant:
+    """Add someone to a meeting. Callers decide `as_host` only after checking ownership (see start_meeting)."""
     if meeting.status == "ended":
         raise HTTPException(status_code=409, detail="This meeting has already ended.")
 
-    # The host is decided by the server: the signed-in user who owns the meeting.
-    is_host = user is not None and user.id == meeting.host_user_id
-    participant = Participant(meeting=meeting, display_name=display_name, is_host=is_host, is_muted=is_muted)
+    if as_host:
+        # One host at a time: starting the meeting again (e.g. from another device) moves the host role here.
+        for other in meeting.active_participants:
+            other.is_host = False
+    participant = Participant(meeting=meeting, display_name=display_name, is_host=as_host, is_muted=is_muted)
     meeting.status = "live"  # the first person to join starts a scheduled meeting
     db.add(participant)
     db.commit()
@@ -120,9 +123,17 @@ def join_meeting(db: Session, meeting: Meeting, display_name: str, user: User | 
     return participant
 
 
+def start_meeting(db: Session, meeting: Meeting, user: User, display_name: str, is_muted: bool) -> Participant:
+    """Join as host. Only the signed-in owner of the meeting may do this."""
+    if user.id != meeting.host_user_id:
+        raise HTTPException(status_code=403, detail="Only the host can start this meeting.")
+    return join_meeting(db, meeting, display_name, is_muted, as_host=True)
+
+
 def leave_meeting(db: Session, participant: Participant) -> None:
     if participant.left_at is None:
         participant.left_at = utc_now()
+        delete_signals_of(db, participant)
         db.commit()
 
 
@@ -132,6 +143,7 @@ def end_meeting(db: Session, meeting: Meeting) -> None:
     meeting.ended_at = now
     for participant in meeting.active_participants:
         participant.left_at = now
+    db.execute(delete(Signal).where(Signal.meeting_id == meeting.id))
     db.commit()
 
 
@@ -148,3 +160,28 @@ def send_message(db: Session, sender: Participant, text: str) -> Message:
     db.commit()
     db.refresh(message)
     return message
+
+
+# ---------- WebRTC signaling (the server only relays connection-setup messages) ----------
+
+def send_signal(db: Session, sender: Participant, to: int, kind: str, sdp: str) -> None:
+    recipient = get_participant_or_404(sender.meeting, to)
+    if recipient.id == sender.id or recipient.left_at is not None:
+        raise HTTPException(status_code=404, detail="That participant isn't in this meeting.")
+    # Only the newest message per sender/recipient/kind matters; drop older undelivered ones.
+    db.execute(delete(Signal).where(Signal.sender_id == sender.id, Signal.recipient_id == to, Signal.kind == kind))
+    db.add(Signal(meeting_id=sender.meeting_id, sender_id=sender.id, recipient_id=to, kind=kind, sdp=sdp))
+    db.commit()
+
+
+def take_signals(db: Session, recipient: Participant) -> list[Signal]:
+    """Return the messages waiting for this participant and delete them (each is delivered once)."""
+    signals = list(db.scalars(select(Signal).where(Signal.recipient_id == recipient.id).order_by(Signal.id)))
+    for signal in signals:
+        db.delete(signal)
+    db.commit()
+    return signals
+
+
+def delete_signals_of(db: Session, participant: Participant) -> None:
+    db.execute(delete(Signal).where(or_(Signal.sender_id == participant.id, Signal.recipient_id == participant.id)))

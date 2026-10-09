@@ -31,6 +31,11 @@ def join(client, code, name="Guest", headers=None, **extra):
     return client.post(f"/api/meetings/{code}/join", json={"display_name": name, **extra}, headers=headers)
 
 
+def start(client, code, headers, name=HOST):
+    """The host's way in (dashboard Start / New meeting): requires signing in as the owner."""
+    return client.post(f"/api/meetings/{code}/start", json={"display_name": name}, headers=headers)
+
+
 def as_participant(participant: dict) -> dict:
     """The header that proves who a participant is (returned only to them when they joined)."""
     return {"X-Participant-Token": participant["token"]}
@@ -138,10 +143,42 @@ def test_join_with_microphone_on(client, auth_headers):
     assert join(client, code, "Priya", is_muted=False).json()["is_muted"] is False
 
 
-def test_only_the_signed_in_owner_becomes_host(client, auth_headers):
+def test_only_start_by_the_signed_in_owner_makes_a_host(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
-    assert join(client, code, HOST, headers=auth_headers).json()["is_host"] is True
+    other = client.post("/api/auth/signup", json={"name": "Other", "email": "o@example.com", "password": "secret123"})
+
+    assert start(client, code, auth_headers).json()["is_host"] is True
+    assert start(client, code, {}).status_code == 401  # signed out
+    assert start(client, code, {"Authorization": f"Bearer {other.json()['token']}"}).status_code == 403  # not the owner
     assert join(client, code, HOST).json()["is_host"] is False  # same name, but not signed in
+
+
+def test_joining_by_invite_link_never_makes_you_host(client, auth_headers):
+    """Regression: a browser still signed in as the owner joined via the invite link as host and ended the meeting."""
+    code = create_instant(client, auth_headers)["meeting_code"]
+    host = start(client, code, auth_headers).json()
+    jiji = join(client, code, "Jiji", headers=auth_headers, as_host=True, is_host=True).json()  # extra fields ignored
+
+    assert jiji["is_host"] is False
+    assert client.post(f"/api/meetings/{code}/end", headers=as_participant(jiji)).status_code == 403
+    assert client.post(f"/api/meetings/{code}/mute-all", headers=as_participant(jiji)).status_code == 403
+    remove_host = f"/api/meetings/{code}/participants/{host['id']}/remove"
+    assert client.post(remove_host, headers=as_participant(jiji)).status_code == 403
+    meeting = client.get(f"/api/meetings/{code}").json()
+    assert meeting["status"] == "live" and len(meeting["active_participants"]) == 2  # nothing happened
+
+    assert client.post(f"/api/meetings/{code}/participants/me/leave", headers=as_participant(jiji)).status_code == 204
+    assert client.post(f"/api/meetings/{code}/end", headers=as_participant(host)).status_code == 204
+
+
+def test_starting_again_moves_the_host_role(client, auth_headers):
+    code = create_instant(client, auth_headers)["meeting_code"]
+    laptop = start(client, code, auth_headers).json()
+    phone = start(client, code, auth_headers, name="Harsh (phone)").json()
+
+    hosts = [p["id"] for p in client.get(f"/api/meetings/{code}").json()["active_participants"] if p["is_host"]]
+    assert hosts == [phone["id"]]  # only one host at a time
+    assert client.post(f"/api/meetings/{code}/end", headers=as_participant(laptop)).status_code == 403
 
 
 def test_join_validation(client, auth_headers):
@@ -185,7 +222,7 @@ def test_chat_rejects_empty_messages_and_people_who_left(client, auth_headers):
 
 def test_host_can_mute_all_and_remove(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
-    host = join(client, code, HOST, headers=auth_headers).json()
+    host = start(client, code, auth_headers).json()
     guest = join(client, code, "Alex").json()
     client.patch(f"/api/meetings/{code}/participants/me", json={"is_muted": False}, headers=as_participant(guest))
 
@@ -210,7 +247,7 @@ def test_guest_cannot_use_host_controls(client, auth_headers):
 def test_outsider_cannot_act_with_public_ids(client, auth_headers):
     """Regression test: participant IDs are public, so they must not be enough to act."""
     code = create_instant(client, auth_headers)["meeting_code"]
-    host = join(client, code, HOST, headers=auth_headers).json()
+    host = start(client, code, auth_headers).json()
     guest = join(client, code, "Alex").json()
     other_code = create_instant(client, auth_headers)["meeting_code"]
     stranger = join(client, other_code, "Stranger").json()
@@ -231,7 +268,7 @@ def test_outsider_cannot_act_with_public_ids(client, auth_headers):
 
 def test_ended_meeting_moves_to_recent_and_cannot_be_joined(client, auth_headers):
     code = create_instant(client, auth_headers)["meeting_code"]
-    host = join(client, code, HOST, headers=auth_headers).json()
+    host = start(client, code, auth_headers).json()
 
     assert client.post(f"/api/meetings/{code}/end", headers=as_participant(host)).status_code == 204
 
@@ -286,3 +323,48 @@ def test_meeting_lists_do_not_query_once_per_meeting(client, auth_headers, db_se
     finally:
         event.remove(engine, "before_cursor_execute", listener)
     assert len(statements) <= 4, statements  # session lookup + user + meetings + participants
+
+
+
+# ---------- WebRTC signaling ----------
+
+def test_signals_are_relayed_once_between_participants(client, auth_headers):
+    code = create_instant(client, auth_headers)["meeting_code"]
+    host = start(client, code, auth_headers).json()
+    guest = join(client, code, "Guest").json()
+
+    offer = {"to": host["id"], "kind": "offer", "sdp": "v=0 fake-offer"}
+    assert client.post(f"/api/meetings/{code}/signals", json=offer, headers=as_participant(guest)).status_code == 204
+
+    received = client.get(f"/api/meetings/{code}/signals", headers=as_participant(host)).json()
+    assert [(s["sender_id"], s["kind"], s["sdp"]) for s in received] == [(guest["id"], "offer", "v=0 fake-offer")]
+    assert client.get(f"/api/meetings/{code}/signals", headers=as_participant(host)).json() == []  # delivered once
+    assert client.get(f"/api/meetings/{code}/signals", headers=as_participant(guest)).json() == []  # not for the guest
+
+
+def test_signals_require_membership(client, auth_headers):
+    code = create_instant(client, auth_headers)["meeting_code"]
+    host = start(client, code, auth_headers).json()
+    other_code = create_instant(client, auth_headers)["meeting_code"]
+    stranger = join(client, other_code, "Stranger").json()
+    offer = {"to": host["id"], "kind": "offer", "sdp": "x"}
+
+    assert client.post(f"/api/meetings/{code}/signals", json=offer).status_code == 401
+    assert client.post(f"/api/meetings/{code}/signals", json=offer, headers=as_participant(stranger)).status_code == 401
+    assert client.get(f"/api/meetings/{code}/signals").status_code == 401
+    guest = join(client, code, "Guest").json()
+    bad_kind = {**offer, "kind": "hack"}
+    assert client.post(f"/api/meetings/{code}/signals", json=bad_kind, headers=as_participant(guest)).status_code == 422
+
+
+def test_leaving_clears_pending_signals(client, auth_headers):
+    code = create_instant(client, auth_headers)["meeting_code"]
+    host = start(client, code, auth_headers).json()
+    guest = join(client, code, "Guest").json()
+    to_host = {"to": host["id"], "kind": "offer", "sdp": "x"}
+    client.post(f"/api/meetings/{code}/signals", json=to_host, headers=as_participant(guest))
+    client.post(f"/api/meetings/{code}/participants/me/leave", headers=as_participant(guest))
+
+    assert client.get(f"/api/meetings/{code}/signals", headers=as_participant(host)).json() == []
+    to_guest = {"to": guest["id"], "kind": "answer", "sdp": "x"}
+    assert client.post(f"/api/meetings/{code}/signals", json=to_guest, headers=as_participant(host)).status_code == 404
